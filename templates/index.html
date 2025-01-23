@@ -1,0 +1,175 @@
+<!--
+index.html
+Author: Scott Stage
+Created: 12/31/2024
+-->
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+    <div class="heading-container">
+        <h1>SOC PC Information</h1>
+		<div class="refresh-dropdown">
+			<select id="refreshInterval" class="refresh-interval-select">
+				<option value="-1">Off</option>
+				<option value="5">5 Seconds</option>
+				<option value="10">10 Seconds</option>
+				<option value="30">30 Seconds</option>
+				<option value="60">1 Minute</option>
+				<option value="120">2 Minutes</option>
+				<option value="300">5 Minutes</option>
+			</select>
+		</div>
+		<h4 id="status-message"></h4>
+		<div id="loading" style="display: none;">Loading...</div>
+    </div>
+    
+
+    <div id="pc-container"></div>
+
+	<script>
+        const menuButtons = document.querySelectorAll(".menu-button");
+        const resultDiv = document.getElementById("result");
+		const loadingDiv = document.getElementById("loading");
+        const HostnameDisplay = document.getElementById("HostnameDisplay");
+        const UsertableDisplay = document.getElementById("UsertableDisplay");
+		const statusMessageDiv = document.getElementById("status-message");
+        const pcContainer = document.getElementById("pc-container");
+		
+
+
+        function createPCSection(systemInfo, key) {
+            const pcSection = document.createElement('div');
+            pcSection.classList.add('pc-section');
+
+            const rdpButton = document.createElement('button');
+            rdpButton.classList.add('rdp-button')
+            rdpButton.textContent = `Connect to ${systemInfo.computername}`;
+            rdpButton.addEventListener('click', () => {
+                //Logic to connect to RDP goes here.
+                //console.log("Attempting to connect to PC", index + 1)
+                //statusMessageDiv.innerText = `Attempting to connect to PC ${index + 1}`;
+                sendCommand("ConnectRdp", systemInfo.computername, 0)    
+            });
+
+            const hostname = document.createElement('div');
+            hostname.innerHTML = `<h2 style="margin: 0px">${systemInfo.computername || 'N/A'}</h2>`;
+
+            const userTable = document.createElement('div');
+            userTable.innerHTML = `
+                <table class="styled-table">
+                  <tr class="top-row">
+                    <th style="border-left: 0px;">Username</th>
+                    <th>Session</th>
+                    <th style="border-right: 0px;">State</th>
+                  </tr>
+                  <tr class="bottom-row">
+                    <td style="border-left: 0px;" id="${key}-username"></td>
+                    <td id="${key}-sessionname"></td>
+                    <td style="border-right: 0px;" id="${key}-state"></td>
+                  </tr>
+                </table>`;
+
+            const sysinfo = document.createElement('div');
+            sysinfo.classList.add('system-info-list');
+            sysinfo.innerHTML = `
+              <h2>System Info:</h2>
+                <ul>
+                    <li><span class="status-label">Diskspace:</span>${systemInfo.freespace} GB free out of ${systemInfo.drivesize} GB</li>
+                    <li><span class="status-label">BIOS Info:</span> N/A</li>
+                    <li><span class="status-label">OS:</span> N/A</li>
+                    <li><span class="status-label">CPU Info:</span> N/A</li>
+                    <li><span class="status-label">Last Reboot:</span> ${convertJsonDate(systemInfo.lastreboot)}</li>
+                </ul>
+            `;
+
+            const software = document.createElement('div');
+            software.classList.add('system-info-list');
+            software.innerHTML = `
+                <h2>Software Versions:</h2>
+                <ul>
+                    <li><span class="status-label">Forcepoint:</span>${systemInfo.forcepoint}</li>
+                    <li><span class="status-label">Zscaler Agent:</span>${systemInfo.zscaler}</li>
+                    <li><span class="status-label">Crowdstrike Agent:</span>${systemInfo.crowdstrike}</li>
+                    <li><span class="status-label">Cisco Anyconnect Agent:</span>${systemInfo.ciscoanyconnect}</li>
+                </ul>
+            `;
+
+
+            const headerContainer = document.createElement('div');
+            headerContainer.classList.add('hostname-user-container'); // Add a container class
+            headerContainer.appendChild(hostname);
+            headerContainer.appendChild(rdpButton);
+
+
+            const userContainer = document.createElement('div');
+            userContainer.classList.add('hostname-user-container'); // Add a container class
+            userTable.classList.add('user-table');
+            userContainer.appendChild(userTable);
+    
+
+            const pcInfoContainer = document.createElement('div');
+            pcInfoContainer.classList.add('list-container'); // Add a container class
+			pcInfoContainer.appendChild(userContainer);
+            pcInfoContainer.appendChild(sysinfo);
+            pcInfoContainer.appendChild(software);
+
+            pcSection.appendChild(headerContainer);
+            pcSection.appendChild(pcInfoContainer);
+
+            return pcSection;
+        }
+
+       
+
+
+        // Get a reference to the select dropdown element
+        const refreshIntervalSelect = document.getElementById('refreshInterval');
+
+        // Attach an event listener to detect when the user makes a selection.
+        refreshIntervalSelect.addEventListener('change', function() {
+        // retrieve the value
+            const selectedInterval = parseInt(refreshIntervalSelect.value);
+            console.log('Selected Refresh Interval:', selectedInterval);
+            action = "ChangeRefreshInterval"
+            sendCommand(action, selectedInterval, 0)
+        });
+        
+		
+        menuButtons.forEach(button => {
+            button.addEventListener("click", function(){
+                const action = this.getAttribute('data-action');
+                if(action === "RevokeMessage")
+                {
+                   const messageId = prompt("Enter the Message ID's separated by newlines");
+                   sendCommand(action, messageId, 0)
+                }
+                 else if (action === "SetSearchName")
+                 {
+                    const searchName = prompt("Enter the Search Name");
+                    sendCommand(action, searchName, 0);
+                }
+                 else
+                {
+                  sendCommand(action, null, 0);
+                }
+            });
+        });
+
+        function convertJsonDate(jsonDate) {
+            if (!jsonDate){
+                return "No data";
+            }
+            const match = jsonDate.match(/^\/Date\((\d+)\)\/$/);
+            if (match) {
+                const milliseconds = parseInt(match[1], 10);
+                if(!isNaN(milliseconds)){
+                    fulldate = new Date(milliseconds).toString();
+                    date = fulldate.replace(" GMT-0800 (Pacific Standard Time)", "")
+                    return date;
+                }
+            }
+                return "Invalid timestamp"
+        }
+
+    </script>
+{% endblock %}

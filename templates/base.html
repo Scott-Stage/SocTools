@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <style>
+    #loading {
+    	text-align:center; /* Align text to the left */
+    	margin:0px;
+    	padding-left: 10px;
+        background-color: #2d3748;
+        padding: 15px;
+        border-radius: 5px;
+        z-index: 1000;
+    }
+    </style>
+</head>
+<body>
+	<div class="navbar">
+		<div class="navbar-left">
+			<img src="/static/images/logo.webp" alt="logo">
+			<span><h1>SOC Tools</h1></span>
+		</div>
+		<div class="navbar-right">
+			<a href="/">Home</a>
+			 <div class="dropdown">
+				<a href="#">EXO Utils ▼</a>
+				<div class="dropdown-content">
+					<a href="/harddelete">HardDelete</a>
+					<a href="/revokemessage">Revoke Messages</a>
+					<a href="/omeportal">OMEPortal</a>
+				</div>
+			</div>
+			<a href="#">Daily Tasks ▼</a>
+			<a href="#">Monitoring ▼</a>
+			<a href="#">Misc ▼</a>
+			<div class="dropdown">
+				<a href="#">Help ▼</a>
+				<div class="dropdown-content">
+					<a href="/logs">Logs</a>
+				</div>
+			</div>
+			<div class="exoStatus-container">
+				<button title="Connect to ExchangeOnline" id="exoButton" class="exoStatus-item">
+					<div id="exchangeonline-status" class="exoStatus-light red"></div>
+					ExchangeOnline
+				</button>
+			</div>
+			<input type="text" placeholder="Search..." class="search-input">
+			<a style="margin-right: 10px" href="#">☼</a>
+			<img src="/static/images/Capture.PNG" alt="profile">	
+		</div>
+	</div>
+	<br>
+	{% block content %}{% endblock %}
+	<script>
+        	const exoStatus = document.getElementById("exchangeonline-status");
+			const exoButton = document.getElementById("exoButton");
+			
+            exoButton.addEventListener('click', () => {
+                //Logic to connect to RDP goes here.
+                console.log("Attempting to connect ExchangeOnline")
+                statusMessageDiv.innerText = "Attempting to connect ExchangeOnline";
+                sendCommand("ConnectToExchangeOnline", null, 0)    
+            });
+			
+			function sendCommand(action, input, index) {
+				console.log("sendCommand action: ", action, "input: ", input);
+				loadingDiv.style.display = "flex";
+				statusMessageDiv.innerText = `Sending command: ${action}...`;
+				const body = {
+						"action": action,
+					};
+				if(input)
+				{
+					body.input = input;
+				}
+				fetch('/events', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json'
+					},
+					body: JSON.stringify(body),
+					keepalive: true					
+				}).finally(() => {
+				});
+			}
+			
+			let eventSource = null;
+      		let sseReady = false;
+
+			function setupSSE() {
+				loadingDiv.style.display = "flex";
+				console.log("setupSSE started"); // Log before creating the event source
+				eventSource = new EventSource('/sse');
+				eventSource.onopen = function() {
+					console.log("SSE connection opened."); // Log when connection opens
+          	sseReady = true;
+          	sendGetSocPcInfo()
+				}
+				eventSource.onmessage = function(event) {
+					if (!event.data || typeof event.data !== 'string') {
+						console.warn("Invalid event data:", event.data);
+						return;
+					}
+					try {
+						const result = JSON.parse(event.data);
+						console.log("Parsed SSE data:", result)
+							if(result && result.action){
+								if(window.location.pathname === "/index.html" || window.location.pathname === "/"){
+									if(result.action == "GetSocPcInfo"){
+										const systemNames = result.output;
+										for(const system in systemNames){
+											if (systemNames.hasOwnProperty(system)){
+												const pcSection =  createPCSection(systemNames[system], system)
+												pcContainer.appendChild(pcSection)
+											}
+										}
+										if(pcContainer.hasChildNodes()){
+											sendCommand("GetCurrentUserInfo", null, 0)
+											sendCommand("CheckExoConnection", null, 0)
+										}
+										statusMessageDiv.innerText = `Command: ${result.action} completed successfully.`;
+									}
+									if(result.action == "GetCurrentUserInfo"){
+										if(pcContainer.hasChildNodes()){
+											const systemNames = result.output;
+											for(const system in systemNames){
+												if (systemNames.hasOwnProperty(system)){
+													if(systemNames[system].state == "Active"){
+														(document.getElementById(`${system}-username`)).innerText = systemNames[system].username;
+														(document.getElementById(`${system}-sessionname`)).innerText = systemNames[system].sessionname;
+														(document.getElementById(`${system}-state`)).innerText = systemNames[system].state;
+													}  
+												}
+											}
+											statusMessageDiv.innerText = `Command: ${result.action} completed successfully.`;
+										}
+									}
+								}
+								if(result.action == "ConnectToExchangeOnline" || result.action == "CheckExoConnection"){
+									if(result.output == "Connected"){
+										exoStatus.classList.remove('red')
+										exoStatus.classList.add('green')
+									}else if (result.output == "Disconnected"){
+										exoStatus.classList.remove('green')
+										exoStatus.classList.add('red')
+									}
+								}
+							}
+					} catch (error) {
+						console.error("Error parsing SSE data:", error);
+						console.error("SSE Event Data:", event.data);
+						console.error("Error Type:", error.name);
+						console.error("Error Message:", error.message);
+					}
+				};
+				eventSource.onerror = function(error) {
+					console.error("SSE error:", error);
+				};
+				eventSource.onclose = () => {
+                    console.log('SSE closed');
+                };
+
+			}
+			
+			function delay(ms) {
+  				return new Promise(resolve => setTimeout(resolve, ms));
+			}
+
+			async function sendGetSocPcInfo(){
+      			if(sseReady){
+					if(window.location.pathname === "/index.html" || window.location.pathname === "/"){
+      			        sendCommand("GetSocPcInfo", null, 0)
+      			    }
+      			}
+      			else {
+      			    await delay(100);
+      			    sendGetSocPcInfo();
+      			}
+			}
+				
+			
+			
+        	document.addEventListener('DOMContentLoaded', function() {
+				let loadingDiv = document.getElementById("loading");
+				let pcContainer = document.getElementById("pc-container");
+				let statusMessageDiv = document.getElementById("status-message");
+				loadingDiv.style.display = "flex";
+                console.log("DOM content loaded event started");
+                setupSSE();
+                console.log("DOM content loaded event finished");
+            });
+
+			window.addEventListener('beforeunload', function() {
+            	if (eventSource) {
+                	eventSource.close();
+           	 	}
+       		});
+			
+			
+		</script>
+	{% block script %}{% endblock %}
+</body>
+</html>
