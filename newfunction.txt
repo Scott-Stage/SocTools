@@ -9,17 +9,18 @@ function Process-AtomSvcFile {
     [xml]$xmlContent = Get-Content -Path $FilePath -Encoding UTF8
 
     # Define XML namespaces
-    $namespace = @{
-        app  = "http://www.w3.org/2007/app"
-        atom = "http://www.w3.org/2005/Atom"
-    }
+    $namespace = New-Object System.Xml.XmlNamespaceManager($xmlContent.NameTable)
+    $namespace.AddNamespace("app", "http://www.w3.org/2007/app")
+    $namespace.AddNamespace("atom", "http://www.w3.org/2005/Atom")
 
     # Use XPath to select the workspace element
-    $workspace = $xmlContent.SelectSingleNode("//app:workspace", $namespace)
+    $xpathWorkspace = "//app:workspace"
+    $workspace = $xmlContent.SelectSingleNode($xpathWorkspace, $namespace)
 
     if ($workspace) {
         # Use XPath to select the collection element
-        $collection = $workspace.SelectSingleNode("./app:collection", $namespace)
+        $xpathCollection = "./app:collection"
+        $collection = $workspace.SelectSingleNode($xpathCollection, $namespace)
 
         if ($collection) {
             # Extract the href attribute
