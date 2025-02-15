@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SocToolsConfiguration>
+  <logFile>logs/SocTools.log</logFile>
+  <delimiter>__END__</delimiter>
+  <dateFormatPowershell>yyyy-MM-dd HH:mm:ss</dateFormatPowershell>
+  <dateFormatPython>%Y-%m-%d %H:%M:%S</dateFormatPython>
+  <hostname>127.0.0.1</hostname>
+  <port>65432</port>
+  <computerList>
+    <computer>DESKTOP-JUJ4D1S</computer>
+    <!-- <computer>sys54618</computer> -->
+    <!-- <computer>sys54619</computer> -->
+    <!-- <computer>sys54622</computer> -->
+    <!-- <computer>sys54623</computer> -->
+    <!-- <computer>sys63926</computer> -->
+    <!-- <computer>sys63896</computer> -->
+  </computerList>
+</SocToolsConfiguration>

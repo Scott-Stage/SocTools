@@ -1,59 +1,41 @@
-         table {
-            border-collapse: collapse;
-            width: 100%;
-        }
-        th, td {
-            border: 1px solid #ddd;
-            padding: 8px;
-            text-align: left;
-        }
-         th {
-            background-color: #f2f2f2;
-           position: relative; /* Needed for positioning dropdown */
-        }
-         th .dropdown-container {
-            position: absolute;
-            top: 100%;
-            left: 0;
-             background-color: white;
-            border: 1px solid #ddd;
-             z-index: 1;
-              padding: 8px;
-              display: none; /* Hidden by default */
-             min-width: 150px;
-        }
-           th.show .dropdown-container{
-            display: block;
-           }
-        th .dropdown-button {
-            background-color: #f2f2f2;
-            border: none;
-             padding: 5px;
-             cursor: pointer;
-        }
-        th input[type=text] {
-            padding: 8px;
-            margin-bottom: 10px;
-        }
-        th .sort-option {
-             display: block;
-            padding: 5px;
-             cursor: pointer;
+using System;
+using System.ServiceModel.Syndication;
+using System.Xml;
 
-        }
-         th .sort-option:hover {
-            background-color: #eee;
-         }
-        th.sorted-asc .dropdown-button::after {
-            content: "\25B2"; /* Up arrow */
-            float: right;
+public class ParseAtomSvc
+{
+    public static string GetMetadataUrl(string atomsvcUrl)
+    {
+        using (XmlReader reader = XmlReader.Create(atomsvcUrl))
+        {
+            Atom10FeedFormatter formatter = new Atom10FeedFormatter();
+            formatter.ReadFrom(reader);
 
+            foreach (SyndicationLink link in formatter.Feed.Links)
+            {
+                if (link.RelationshipType == "service.metadata")
+                {
+                    return link.Uri.AbsoluteUri;
+                }
+            }
         }
-        th.sorted-desc .dropdown-button::after {
-            content: "\25BC"; /* Down arrow */
-            float: right;
+
+        return null; // Metadata URL not found
+    }
+
+    public static void Main(string[] args)
+    {
+        string atomsvcUrl = "http://yourserver/yourservice.atomsvc";  // Replace with your URL
+        string metadataUrl = GetMetadataUrl(atomsvcUrl);
+
+        if (metadataUrl != null)
+        {
+            Console.WriteLine("Metadata URL: " + metadataUrl);
+            // Use metadataUrl to generate client proxy or inspect service details.
         }
-          th .filter-option{
-             display: block;
-            padding: 5px;
-         }
+        else
+        {
+            Console.WriteLine("Could not find service metadata URL.");
+        }
+    }
+}
