@@ -8,15 +8,33 @@ function Process-AtomSvcFile {
     # Read the XML content from the file
     [xml]$xmlContent = Get-Content -Path $FilePath -Encoding UTF8
 
-    # Navigate to the collection element and extract the href attribute
-    $collectionHref = $xmlContent.feed.workspace.collection.href  # Assumes feed/workspace/collection structure
+    # Navigate to the workspace element
+    $workspace = $xmlContent.feed.workspace
 
-    # Check if the collectionHref was found
-    if ($collectionHref) {
-      Write-Host "Collection URL: $collectionHref"
-      return $collectionHref
-    } else {
-      Write-Warning "No collection URL found in $($FilePath)."
+    if ($workspace) {
+        # Navigate to the collection element
+        $collection = $workspace.collection
+
+        if ($collection) {
+          #Extract the href attribute
+          $collectionHref = $collection.href
+
+          if ($collectionHref) {
+            Write-Host "Collection URL: $collectionHref"
+            return $collectionHref
+          }
+          else {
+            Write-Warning "No 'href' attribute found in the collection element of $($FilePath)."
+            return $null
+          }
+        }
+        else {
+          Write-Warning "No collection element found in the workspace of $($FilePath)."
+          return $null
+        }
+    }
+    else{
+      Write-Warning "No workspace element found in $($FilePath)."
       return $null
     }
   }
