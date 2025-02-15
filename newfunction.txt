@@ -52,8 +52,54 @@ function Process-AtomSvcFile {
 $atomsvcFilePath = "C:\Path\To\Your\Service.atomsvc"
 $collectionUrl = Process-AtomSvcFile -FilePath $atomsvcFilePath
 
+
+function Get-AtomFeedData {
+    param (
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$FeedUrl
+    )
+
+    try {
+        # Download the Atom feed content
+        $webClient = New-Object System.Net.WebClient
+        $xmlContent = $webClient.DownloadString($FeedUrl)
+
+        # Convert the content to XML
+        [xml]$xmlData = $xmlContent
+
+        # Return the XML data
+        return $xmlData
+    }
+    catch {
+        Write-Error "Error retrieving data from $($FeedUrl): $($_.Exception.Message)"
+        return $null
+    }
+}
+
+
+# Example usage: (Assuming you already have $collectionUrl from the previous script)
 if ($collectionUrl) {
-  # Do something with the collection URL.  For example:
-  # Invoke-WebRequest -Uri $collectionUrl
-  Write-Host "Collection URL retrieved successfully."
+    $feedData = Get-AtomFeedData -FeedUrl $collectionUrl
+
+    if ($feedData) {
+        # Process the feed data
+        Write-Host "Feed Title: $($feedData.feed.title)"
+
+        # Loop through the entries in the feed
+        foreach ($entry in $feedData.feed.entry) {
+            Write-Host "  Entry Title: $($entry.title)"
+            Write-Host "  Entry Content: $($entry.content.'#text')" # Or $entry.summary, depending on feed
+
+            #Example of pulling an id if available
+            if($entry.id){
+                Write-Host "  Entry ID: $($entry.id)"
+            }
+
+            # You can access other elements of the entry here, like author, updated, etc.
+        }
+    } else {
+        Write-Warning "Failed to retrieve feed data from $($collectionUrl)."
+    }
+} else {
+    Write-Warning "No collection URL available.  Process the .atomsvc file first."
 }
