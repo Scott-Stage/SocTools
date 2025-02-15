@@ -1,41 +1,34 @@
-using System;
-using System.ServiceModel.Syndication;
-using System.Xml;
+function Get-WCFMetadataUrl {
+    param(
+        [string]$AtomSvcUrl
+    )
 
-public class ParseAtomSvc
-{
-    public static string GetMetadataUrl(string atomsvcUrl)
-    {
-        using (XmlReader reader = XmlReader.Create(atomsvcUrl))
-        {
-            Atom10FeedFormatter formatter = new Atom10FeedFormatter();
-            formatter.ReadFrom(reader);
+    try {
+        $webClient = New-Object System.Net.WebClient
+        $xml = [xml]$webClient.DownloadString($AtomSvcUrl)
 
-            foreach (SyndicationLink link in formatter.Feed.Links)
-            {
-                if (link.RelationshipType == "service.metadata")
-                {
-                    return link.Uri.AbsoluteUri;
-                }
-            }
-        }
+        $metadataLink = $xml.feed.link | Where-Object {$_.rel -eq 'service.metadata'}
 
-        return null; // Metadata URL not found
-    }
-
-    public static void Main(string[] args)
-    {
-        string atomsvcUrl = "http://yourserver/yourservice.atomsvc";  // Replace with your URL
-        string metadataUrl = GetMetadataUrl(atomsvcUrl);
-
-        if (metadataUrl != null)
-        {
-            Console.WriteLine("Metadata URL: " + metadataUrl);
-            // Use metadataUrl to generate client proxy or inspect service details.
-        }
-        else
-        {
-            Console.WriteLine("Could not find service metadata URL.");
+        if ($metadataLink) {
+            return $metadataLink.href
+        } else {
+            Write-Warning "Could not find service metadata URL in '$AtomSvcUrl'."
+            return $null
         }
     }
+    catch {
+        Write-Error "Error retrieving or processing '$AtomSvcUrl': $_"
+        return $null
+    }
+}
+
+# Example usage:
+$atomsvcUrl = "http://yourserver/yourservice.atomsvc" # Replace with your URL
+$metadataUrl = Get-WCFMetadataUrl -AtomSvcUrl $atomsvcUrl
+
+if ($metadataUrl) {
+    Write-Host "Metadata URL: $metadataUrl"
+    # Use $metadataUrl to generate client proxy or inspect service details
+    # Example using svcutil:
+    # & svcutil.exe $metadataUrl
 }
