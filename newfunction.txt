@@ -8,16 +8,15 @@ function Process-AtomSvcFile {
     # Read the XML content from the file
     [xml]$xmlContent = Get-Content -Path $FilePath -Encoding UTF8
 
-    # Navigate to the link with the rel="service.metadata" attribute
-    $metadataLink = $xmlContent.feed.link | Where-Object { $_.rel -eq "service.metadata" }
+    # Navigate to the collection element and extract the href attribute
+    $collectionHref = $xmlContent.feed.workspace.collection.href  # Assumes feed/workspace/collection structure
 
-    # Check if the link was found
-    if ($metadataLink) {
-      $metadataUrl = $metadataLink.href
-      Write-Host "Metadata URL: $metadataUrl"
-      return $metadataUrl
+    # Check if the collectionHref was found
+    if ($collectionHref) {
+      Write-Host "Collection URL: $collectionHref"
+      return $collectionHref
     } else {
-      Write-Warning "No metadata link found in $($FilePath)."
+      Write-Warning "No collection URL found in $($FilePath)."
       return $null
     }
   }
@@ -29,10 +28,10 @@ function Process-AtomSvcFile {
 
 # Example usage:  Replace "C:\Path\To\Your\Service.atomsvc" with your file path.
 $atomsvcFilePath = "C:\Path\To\Your\Service.atomsvc"
-$metadataUrl = Process-AtomSvcFile -FilePath $atomsvcFilePath
+$collectionUrl = Process-AtomSvcFile -FilePath $atomsvcFilePath
 
-if ($metadataUrl) {
-  # Do something with the metadata URL.  For example:
-  # Invoke-WebRequest -Uri $metadataUrl -OutFile "C:\temp\metadata.xml"
-  Write-Host "Metadata URL saved to C:\temp\metadata.xml"
+if ($collectionUrl) {
+  # Do something with the collection URL.  For example:
+  # Invoke-WebRequest -Uri $collectionUrl
+  Write-Host "Collection URL retrieved successfully."
 }
