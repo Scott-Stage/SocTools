@@ -1,119 +1,22 @@
-function Process-AtomSvcFile {
-  param (
-    [Parameter(Mandatory = $true, Position = 0)]
-    [string]$FilePath
-  )
+  const xmlString = event.data; // The XML data is in event.data
 
   try {
-    # Read the XML content from the file
-    [xml]$xmlContent = Get-Content -Path $FilePath -Encoding UTF8
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(xmlString, "text/xml");
 
-    # Define XML namespaces
-    $namespace = New-Object System.Xml.XmlNamespaceManager($xmlContent.NameTable)
-    $namespace.AddNamespace("app", "http://www.w3.org/2007/app")
-    $namespace.AddNamespace("atom", "http://www.w3.org/2005/Atom")
-
-    # Use XPath to select the workspace element
-    $xpathWorkspace = "//app:workspace"
-    $workspace = $xmlContent.SelectSingleNode($xpathWorkspace, $namespace)
-
-    if ($workspace) {
-        # Use XPath to select the collection element
-        $xpathCollection = "./app:collection"
-        $collection = $workspace.SelectSingleNode($xpathCollection, $namespace)
-
-        if ($collection) {
-            # Extract the href attribute
-            $collectionHref = $collection.GetAttribute("href")
-
-            if ($collectionHref) {
-                Write-Host "Collection URL: $collectionHref"
-                return $collectionHref
-            } else {
-                Write-Warning "No 'href' attribute found in the collection element of $($FilePath)."
-                return $null
-            }
-        } else {
-            Write-Warning "No collection element found in the workspace of $($FilePath)."
-            return $null
-        }
-    } else {
-        Write-Warning "No workspace element found in $($FilePath)."
-        return $null
+    // Handle XML parse errors (check for <parsererror> tag)
+    if (xmlDoc.getElementsByTagName("parsererror").length > 0) {
+      console.error("XML Parsing Error:", xmlDoc.getElementsByTagName("parsererror")[0].textContent);
+      return; // Stop processing this event if there's an error
     }
-  }
-  catch {
-    Write-Error "Error processing $($FilePath): $($_.Exception.Message)"
-    return $null
-  }
-}
 
-# Example usage:  Replace "C:\Path\To\Your\Service.atomsvc" with your file path.
-$atomsvcFilePath = "C:\Path\To\Your\Service.atomsvc"
-$collectionUrl = Process-AtomSvcFile -FilePath $atomsvcFilePath
+    // Now you can work with the xmlDoc (the DOM tree)
+    // Example: Extracting a title from the XML:
+    const titleElement = xmlDoc.getElementsByTagName("title")[0];
+    if (titleElement) {
+      const title = titleElement.textContent;
+      console.log("Title:", title);
 
-
-function Get-AtomFeedData {
-    param (
-        [Parameter(Mandatory = $true, Position = 0)]
-        [string]$FeedUrl,
-        [Parameter(Mandatory = $true)]
-        [string]$Username,
-        [Parameter(Mandatory = $true)]
-        [string]$Password
-    )
-
-    try {
-        # Create a WebClient object
-        $webClient = New-Object System.Net.WebClient
-
-        # Construct the authentication header
-        $credential = "$($Username):$($Password)"
-        $bytes = [System.Text.Encoding]::ASCII.GetBytes($credential)
-        $base64 = [Convert]::ToBase64String($bytes)
-        $headerValue = "Basic $base64"
-
-        # Add the authentication header
-        $webClient.Headers.Add("Authorization", $headerValue)
-
-        # Download the Atom feed content
-        $xmlContent = $webClient.DownloadString($FeedUrl)
-
-        # Convert the content to XML
-        [xml]$xmlData = $xmlContent
-
-        # Return the XML data
-        return $xmlData
+      // Update the HTML (example)
+      document.getElementById("myTitle").textContent = title;
     }
-    catch {
-        Write-Error "Error retrieving data from $($FeedUrl): $($_.Exception.Message)"
-        return $null
-    }
-}
-
-# Example Usage (Assuming you have $collectionUrl):
-if ($collectionUrl) {
-    #Replace with actual values
-    $username = "yourUsername"
-    $password = "yourPassword"
-
-    $feedData = Get-AtomFeedData -FeedUrl $collectionUrl -Username $username -Password $password
-
-    if ($feedData) {
-        # Process the feed data (same as before)
-        Write-Host "Feed Title: $($feedData.feed.title)"
-        foreach ($entry in $feedData.feed.entry) {
-             Write-Host "  Entry Title: $($entry.title)"
-             if($entry.content){
-                Write-Host "  Entry Content: $($entry.content.'#text')"
-             }
-             elseif ($entry.summary) {
-                Write-Host "  Entry Summary: $($entry.summary.'#text')"
-             }
-        }
-    } else {
-        Write-Warning "Failed to retrieve feed data from $($collectionUrl)."
-    }
-} else {
-    Write-Warning "No collection URL available.  Process the .atomsvc file first."
-}
