@@ -1,34 +1,38 @@
-function Get-WCFMetadataUrl {
-    param(
-        [string]$AtomSvcUrl
-    )
+function Process-AtomSvcFile {
+  param (
+    [Parameter(Mandatory = $true, Position = 0)]
+    [string]$FilePath
+  )
 
-    try {
-        $webClient = New-Object System.Net.WebClient
-        $xml = [xml]$webClient.DownloadString($AtomSvcUrl)
+  try {
+    # Read the XML content from the file
+    [xml]$xmlContent = Get-Content -Path $FilePath -Encoding UTF8
 
-        $metadataLink = $xml.feed.link | Where-Object {$_.rel -eq 'service.metadata'}
+    # Navigate to the link with the rel="service.metadata" attribute
+    $metadataLink = $xmlContent.feed.link | Where-Object { $_.rel -eq "service.metadata" }
 
-        if ($metadataLink) {
-            return $metadataLink.href
-        } else {
-            Write-Warning "Could not find service metadata URL in '$AtomSvcUrl'."
-            return $null
-        }
+    # Check if the link was found
+    if ($metadataLink) {
+      $metadataUrl = $metadataLink.href
+      Write-Host "Metadata URL: $metadataUrl"
+      return $metadataUrl
+    } else {
+      Write-Warning "No metadata link found in $($FilePath)."
+      return $null
     }
-    catch {
-        Write-Error "Error retrieving or processing '$AtomSvcUrl': $_"
-        return $null
-    }
+  }
+  catch {
+    Write-Error "Error processing $($FilePath): $($_.Exception.Message)"
+    return $null
+  }
 }
 
-# Example usage:
-$atomsvcUrl = "http://yourserver/yourservice.atomsvc" # Replace with your URL
-$metadataUrl = Get-WCFMetadataUrl -AtomSvcUrl $atomsvcUrl
+# Example usage:  Replace "C:\Path\To\Your\Service.atomsvc" with your file path.
+$atomsvcFilePath = "C:\Path\To\Your\Service.atomsvc"
+$metadataUrl = Process-AtomSvcFile -FilePath $atomsvcFilePath
 
 if ($metadataUrl) {
-    Write-Host "Metadata URL: $metadataUrl"
-    # Use $metadataUrl to generate client proxy or inspect service details
-    # Example using svcutil:
-    # & svcutil.exe $metadataUrl
+  # Do something with the metadata URL.  For example:
+  # Invoke-WebRequest -Uri $metadataUrl -OutFile "C:\temp\metadata.xml"
+  Write-Host "Metadata URL saved to C:\temp\metadata.xml"
 }
