@@ -56,12 +56,27 @@ $collectionUrl = Process-AtomSvcFile -FilePath $atomsvcFilePath
 function Get-AtomFeedData {
     param (
         [Parameter(Mandatory = $true, Position = 0)]
-        [string]$FeedUrl
+        [string]$FeedUrl,
+        [Parameter(Mandatory = $true)]
+        [string]$Username,
+        [Parameter(Mandatory = $true)]
+        [string]$Password
     )
 
     try {
-        # Download the Atom feed content
+        # Create a WebClient object
         $webClient = New-Object System.Net.WebClient
+
+        # Construct the authentication header
+        $credential = "$($Username):$($Password)"
+        $bytes = [System.Text.Encoding]::ASCII.GetBytes($credential)
+        $base64 = [Convert]::ToBase64String($bytes)
+        $headerValue = "Basic $base64"
+
+        # Add the authentication header
+        $webClient.Headers.Add("Authorization", $headerValue)
+
+        # Download the Atom feed content
         $xmlContent = $webClient.DownloadString($FeedUrl)
 
         # Convert the content to XML
@@ -76,26 +91,25 @@ function Get-AtomFeedData {
     }
 }
 
-
-# Example usage: (Assuming you already have $collectionUrl from the previous script)
+# Example Usage (Assuming you have $collectionUrl):
 if ($collectionUrl) {
-    $feedData = Get-AtomFeedData -FeedUrl $collectionUrl
+    #Replace with actual values
+    $username = "yourUsername"
+    $password = "yourPassword"
+
+    $feedData = Get-AtomFeedData -FeedUrl $collectionUrl -Username $username -Password $password
 
     if ($feedData) {
-        # Process the feed data
+        # Process the feed data (same as before)
         Write-Host "Feed Title: $($feedData.feed.title)"
-
-        # Loop through the entries in the feed
         foreach ($entry in $feedData.feed.entry) {
-            Write-Host "  Entry Title: $($entry.title)"
-            Write-Host "  Entry Content: $($entry.content.'#text')" # Or $entry.summary, depending on feed
-
-            #Example of pulling an id if available
-            if($entry.id){
-                Write-Host "  Entry ID: $($entry.id)"
-            }
-
-            # You can access other elements of the entry here, like author, updated, etc.
+             Write-Host "  Entry Title: $($entry.title)"
+             if($entry.content){
+                Write-Host "  Entry Content: $($entry.content.'#text')"
+             }
+             elseif ($entry.summary) {
+                Write-Host "  Entry Summary: $($entry.summary.'#text')"
+             }
         }
     } else {
         Write-Warning "Failed to retrieve feed data from $($collectionUrl)."
