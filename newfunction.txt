@@ -1,43 +1,27 @@
-function ConvertTo-JsonFromXml($XMLData)
-{
-    $xmldoc = [System.Xml.XmlDataDocument]::new()
-    $xmldoc.LoadXml((Remove-UnknownCharactersFromXML -String $XMLData))
-    $res = [Newtonsoft.Json.JsonConvert]::SerializeXmlNode($xmldoc,[Newtonsoft.Json.Formatting, Newtonsoft.Json, Version=12.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed]::Indented)
-    Write-Output ([Regex]::Replace($res, "@", [string]::Empty, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase))
-}
-function Remove-UnknownCharactersFromXML
-{
-    Param(
-        [Parameter(Mandatory)]$String
-    )
-    $specialChars = $String
-    [int]$count = 0
-    $shouldProceed = $true
-    foreach($item in ($specialChars).ToCharArray())
-    {
-        if($shouldProceed)
-        {
-            if($item -ne '<')
-            {
-                $shouldProceed = $true
-                $count++
-            }
-            else{ $shouldProceed = $false }
+function findAllObjectsWithValueInReport(obj, targetValue) {
+  const results = [];
+
+  // Function to search within the "report" node
+  function searchInReport(reportObj) {
+    for (const key in reportObj) {
+      if (reportObj.hasOwnProperty(key)) {
+        const value = reportObj[key];
+
+        if (value === targetValue) {
+          results.push(reportObj); // Found a match, add the object to results
+        } else if (typeof value === 'object' && value !== null) {
+          searchInReport(value); // Recursive call for nested objects
+        } else if (typeof value !== 'object' && value === targetValue) {
+          results.push(reportObj);
         }
+      }
     }
-    return ($specialChars[$count..(($specialChars).ToCharArray().Count - 1)] -join '')
-}
+  }
 
-$xmlFilePath = "C:\Users\Scott\Desktop\test.xml"  # Replace with your XML file path
+  // Check if the root object has a "report" property and search within it
+  if (obj && obj.hasOwnProperty('report') && typeof obj.report === 'object' && obj.report !== null) {
+    searchInReport(obj.report); // Start the search within the report object
+  }
 
-try {
-    $xml = [xml](Get-Content "C:\path\to\your\file.xml")
-    $xmlData = $xmlContent 
-
-    $jsonOutput = ConvertTo-JsonFromXml($xmlData)
-
-    Write-Host $jsonOutput
-}
-catch {
-    Write-Error "Error processing XML: $($_.Exception.Message)"
+  return results; // Return the array of matching objects
 }
