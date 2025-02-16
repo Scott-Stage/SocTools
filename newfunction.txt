@@ -1,52 +1,40 @@
-function Convert-XmlToJson {
-    param (
-        [xml]$XmlInput
+function ConvertTo-JsonFromXml($XMLData)
+{
+    $xmldoc = [System.Xml.XmlDataDocument]::new()
+    $xmldoc.LoadXml((Remove-UnknownCharactersFromXML -String $XMLData))
+    $res = [Newtonsoft.Json.JsonConvert]::SerializeXmlNode($xmldoc,[Newtonsoft.Json.Formatting, Newtonsoft.Json, Version=12.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed]::Indented)
+    Write-Output ([Regex]::Replace($res, "@", [string]::Empty, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase))
+}
+function Remove-UnknownCharactersFromXML
+{
+    Param(
+        [Parameter(Mandatory)]$String
     )
-
-    $JsonObject = [ordered] @{}
-
-    # Get the root element
-    $rootElement = $XmlInput.DocumentElement
-
-    # Iterate through the child nodes of the root element
-    foreach ($childNode in $rootElement.ChildNodes) {
-        if ($childNode.NodeType -eq "Element") {
-            # Check if the child node has attributes
-            if ($childNode.HasAttributes) {
-                $childName = $childNode.Name
-                $item = [ordered] @{}
-                #Get every attribute
-                foreach ($attribute in $childNode.Attributes) {
-                    $item[$attribute.Name] = $attribute.Value
-                }
-
-                $JsonObject[$childName] = $item #Add to the JsonObject
-
+    $specialChars = $String
+    [int]$count = 0
+    $shouldProceed = $true
+    foreach($item in ($specialChars).ToCharArray())
+    {
+        if($shouldProceed)
+        {
+            if($item -ne '<')
+            {
+                $shouldProceed = $true
+                $count++
             }
-             else{
-                #Handle empty elements
-
-                 $childName = $childNode.Name
-                 $JsonObject[$childName]= "" #set to empty
-
-             }
-
-
+            else{ $shouldProceed = $false }
         }
     }
-
-    return ConvertTo-Json -InputObject $JsonObject -Depth 10
+    return ($specialChars[$count..(($specialChars).ToCharArray().Count - 1)] -join '')
 }
 
-
-# Example usage:
-$xmlFilePath = "C:\Users\Scott\Desktop\test.xml" # Replace with your XML file path
+$xmlFilePath = "C:\Users\Scott\Desktop\test.xml"  # Replace with your XML file path
 
 try {
-    $xmlContent = Get-Content -Path $xmlFilePath -Raw
-    $xmlData = [xml]$xmlContent
+    $xml = [xml](Get-Content "C:\path\to\your\file.xml")
+    $xmlData = $xmlContent 
 
-    $jsonOutput = Convert-XmlToJson -XmlInput $xmlData
+    $jsonOutput = ConvertTo-JsonFromXml($xmlData)
 
     Write-Host $jsonOutput
 }
