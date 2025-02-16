@@ -1,22 +1,30 @@
 function findAllObjectsWithValue(obj, targetValue) {
-  const results = [];
+    const results = [];
 
-  function search(currentObj) {
-    for (const key in currentObj) {
-      if (currentObj.hasOwnProperty(key)) {
-        const value = currentObj[key];
+    function search(currentObj) {
+        for (const key in currentObj) {
+            if (currentObj.hasOwnProperty(key)) {
+                const value = currentObj[key];
 
-        if (value === targetValue) {
-          results.push(currentObj); // Found a match, add the object to results
+                if (value === targetValue) {
+                    results.push(currentObj); // Found a match, add the object to results
+                }
+
+                // Check if the value IS an object and that it is not null.  Crucial
+                else if (typeof value === 'object' && value !== null) {
+                    search(value); // Recursive call for nested objects
+                }
+
+                // Crucially ALSO check if the value is a PRIMITIVE and matches targetValue
+                // The previous logic ONLY searched nested OBJECTS
+                 else if (typeof value !== 'object' && value === targetValue){
+                    results.push(currentObj);
+
+                 }
+            }
         }
-
-        if (typeof value === 'object' && value !== null) {
-          search(value); // Recursive call for nested objects
-        }
-      }
     }
-  }
 
-  search(obj); // Start the search from the root object
-  return results; // Return the array of matching objects
+    search(obj); // Start the search from the root object
+    return results; // Return the array of matching objects
 }
