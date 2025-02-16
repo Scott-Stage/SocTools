@@ -1,19 +1,22 @@
-function findObjectWithValue(obj, targetValue) {
-    for (const key in obj) {
-        if (obj.hasOwnProperty(key)) {
-            const value = obj[key];
+function findAllObjectsWithValue(obj, targetValue) {
+  const results = [];
 
-            if (value === targetValue) {
-                return obj;  // Found the value, return the object it's in
-            }
+  function search(currentObj) {
+    for (const key in currentObj) {
+      if (currentObj.hasOwnProperty(key)) {
+        const value = currentObj[key];
 
-            if (typeof value === 'object' && value !== null) {
-                const result = findObjectWithValue(value, targetValue);
-                if (result) {
-                    return result; // Value found in nested object, return the object
-                }
-            }
+        if (value === targetValue) {
+          results.push(currentObj); // Found a match, add the object to results
         }
+
+        if (typeof value === 'object' && value !== null) {
+          search(value); // Recursive call for nested objects
+        }
+      }
     }
-    return null; // Value not found
+  }
+
+  search(obj); // Start the search from the root object
+  return results; // Return the array of matching objects
 }
