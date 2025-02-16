@@ -1,22 +1,31 @@
-  const xmlString = event.data; // The XML data is in event.data
+def xml_to_dict(element):
+    """Converts an XML element to a dictionary, handling attributes and namespaces."""
+    d = {}
 
-  try {
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlString, "text/xml");
+    # Add attributes of the current element to the dictionary
+    d.update(element.attrib)
 
-    // Handle XML parse errors (check for <parsererror> tag)
-    if (xmlDoc.getElementsByTagName("parsererror").length > 0) {
-      console.error("XML Parsing Error:", xmlDoc.getElementsByTagName("parsererror")[0].textContent);
-      return; // Stop processing this event if there's an error
-    }
+    # Process child elements
+    children = list(element)
+    if children:
+        # If there are multiple children with the same tag, create a list
+        dd = {}
+        for child in children:
+            tag = child.tag.split('}')[-1]  # Remove namespace
+            child_data = xml_to_dict(child) # recursive call
 
-    // Now you can work with the xmlDoc (the DOM tree)
-    // Example: Extracting a title from the XML:
-    const titleElement = xmlDoc.getElementsByTagName("title")[0];
-    if (titleElement) {
-      const title = titleElement.textContent;
-      console.log("Title:", title);
+            if tag in dd:
+                if not isinstance(dd[tag], list):
+                    dd[tag] = [dd[tag]]  # Convert to a list if it's not already
+                dd[tag].append(child_data)
+            else:
+                dd[tag] = child_data
 
-      // Update the HTML (example)
-      document.getElementById("myTitle").textContent = title;
-    }
+        # If it's not a leaf node, incorporate the children's data
+        d.update(dd)
+    else:
+        # If it's a leaf node, get the text content (if any)
+        if element.text:
+            d["value"] = element.text #Use value key to preserve the xml structure
+
+    return d
