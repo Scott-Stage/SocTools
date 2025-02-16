@@ -1,31 +1,25 @@
-def xml_to_dict(element):
-    """Converts an XML element to a dictionary, handling attributes and namespaces."""
-    d = {}
+function findValue(obj, targetValue) {
+    for (const key in obj) {
+        if (obj.hasOwnProperty(key)) {
+            const value = obj[key];
 
-    # Add attributes of the current element to the dictionary
-    d.update(element.attrib)
+            if (value === targetValue) {
+                return true;  // Found the value
+            }
 
-    # Process child elements
-    children = list(element)
-    if children:
-        # If there are multiple children with the same tag, create a list
-        dd = {}
-        for child in children:
-            tag = child.tag.split('}')[-1]  # Remove namespace
-            child_data = xml_to_dict(child) # recursive call
+            if (typeof value === 'object' && value !== null) {
+                if (findValue(value, targetValue)) {
+                    return true; // Value found in nested object
+                }
+            }
+        }
+    }
+    return false; // Value not found
+}
 
-            if tag in dd:
-                if not isinstance(dd[tag], list):
-                    dd[tag] = [dd[tag]]  # Convert to a list if it's not already
-                dd[tag].append(child_data)
-            else:
-                dd[tag] = child_data
+const jsonData = { "report": { "report_name": "MyReport", "table1": { "table1_Group1_collection": { "record": [ { "field1": "value1", "field2": "value2" }, { "field1": "value3", "field2": "value4" } ] } } } };
+const target = "value3";
 
-        # If it's not a leaf node, incorporate the children's data
-        d.update(dd)
-    else:
-        # If it's a leaf node, get the text content (if any)
-        if element.text:
-            d["value"] = element.text #Use value key to preserve the xml structure
-
-    return d
+if(findValue(jsonData,target)){
+    console.log("found " + target);
+}
