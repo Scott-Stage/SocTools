@@ -1,25 +1,19 @@
-function findValue(obj, targetValue) {
+function findObjectWithValue(obj, targetValue) {
     for (const key in obj) {
         if (obj.hasOwnProperty(key)) {
             const value = obj[key];
 
             if (value === targetValue) {
-                return true;  // Found the value
+                return obj;  // Found the value, return the object it's in
             }
 
             if (typeof value === 'object' && value !== null) {
-                if (findValue(value, targetValue)) {
-                    return true; // Value found in nested object
+                const result = findObjectWithValue(value, targetValue);
+                if (result) {
+                    return result; // Value found in nested object, return the object
                 }
             }
         }
     }
-    return false; // Value not found
-}
-
-const jsonData = { "report": { "report_name": "MyReport", "table1": { "table1_Group1_collection": { "record": [ { "field1": "value1", "field2": "value2" }, { "field1": "value3", "field2": "value4" } ] } } } };
-const target = "value3";
-
-if(findValue(jsonData,target)){
-    console.log("found " + target);
+    return null; // Value not found
 }
