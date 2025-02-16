@@ -1,5 +1,62 @@
+# Function to convert XML element to a hashtable (PowerShell's equivalent of a dictionary)
+function Convert-XmlElementToHashtable {
+    param(
+        [System.Xml.XmlElement]$Element #send a single xml element to work with
+    )
+
+    $hashtable = @{}
+
+    # Add attributes to the hashtable
+    if ($Element.Attributes) {
+        foreach ($attribute in $Element.Attributes) {
+            $hashtable[$attribute.Name] = $attribute.Value
+        }
+    }
+
+    # Process child elements
+    if ($Element.HasChildNodes) {
+        $childElements = $Element.ChildNodes
+
+        if ($childElements.Count -gt 0) {
+            $childHashtable = @{}
+
+            foreach ($child in $childElements) {
+                 if ($child.NodeType -eq "Element") {  # Process only element nodes
+                    $childTag = $child.Name
+                    # CAST the object as an xml element so it can be used recursively
+                    $childData = Convert-XmlElementToHashtable -Element ([System.Xml.XmlElement]$child)
+
+                    if ($childTag -in $childHashtable.Keys) {
+                        if ($childHashtable[$childTag] -isnot [System.Array]) {
+                            $childHashtable[$childTag] = @($childHashtable[$childTag]) # convert to array
+                        }
+                        $childHashtable[$childTag] += $childData
+                    }
+                    else {
+                        $childHashtable[$childTag] = $childData
+                    }
+                }elseif ($child.NodeType -eq "Text") {  # Handle text nodes (leaf nodes)
+                    if ($child.InnerText) {
+                        $hashtable["value"] = $child.InnerText  # Store text content in "value" key
+                    }
+                }
+            }
+            if ($childHashtable.Count -gt 0) {
+                # Iterate through the child hashtable and add each key-value pair to the parent
+                foreach ($key in $childHashtable.Keys) {
+                    $hashtable[$key] = $childHashtable[$key]
+                }
+            }elseif ($Element.InnerText){
+                $hashtable["value"]=$Element.InnerText
+            }
+        }
+        return $hashtable
+    }
+}
+
+
 # XML File Path
-$xmlFilePath = "C:\path\to\your\your_file.xml"  # Replace with the actual path to your XML file
+$xmlFilePath = "C:\Users\Scott\Desktop\test.xml"  # Replace with the actual path to your XML file
 
 try {
     # Read XML file and convert to XML object
@@ -7,9 +64,10 @@ try {
     $xmlDocument = [xml]$xmlString
 
     # Get the root element
-    $rootElement = $xmlDocument.report #Adjusted to access the 'report' root.  Change if needed
+    #$rootElement = $xmlDocument.report #No root element selected
+
     # Convert the XML to a hashtable
-    $dataHashtable = Convert-XmlElementToHashtable -Element $rootElement
+    $dataHashtable = Convert-XmlElementToHashtable -Element $xmlDocument.DocumentElement # Access root with DocumentElement
 
     # Convert hashtable to JSON
     $jsonData = $dataHashtable | ConvertTo-Json -Depth 10
