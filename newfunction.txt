@@ -1,30 +1,83 @@
-function findAllObjectsWithValue(obj, targetValue) {
-    const results = [];
+# Function to convert XML element to a hashtable (PowerShell's equivalent of a dictionary)
+function Convert-XmlElementToHashtable {
+    param(
+        [xml]$Element
+    )
 
-    function search(currentObj) {
-        for (const key in currentObj) {
-            if (currentObj.hasOwnProperty(key)) {
-                const value = currentObj[key];
+    $hashtable = @{}
 
-                if (value === targetValue) {
-                    results.push(currentObj); // Found a match, add the object to results
-                }
-
-                // Check if the value IS an object and that it is not null.  Crucial
-                else if (typeof value === 'object' && value !== null) {
-                    search(value); // Recursive call for nested objects
-                }
-
-                // Crucially ALSO check if the value is a PRIMITIVE and matches targetValue
-                // The previous logic ONLY searched nested OBJECTS
-                 else if (typeof value !== 'object' && value === targetValue){
-                    results.push(currentObj);
-
-                 }
-            }
+    # Add attributes to the hashtable
+    if ($Element.Attributes) {
+        foreach ($attribute in $Element.Attributes) {
+            $hashtable[$attribute.Name] = $attribute.Value
         }
     }
 
-    search(obj); // Start the search from the root object
-    return results; // Return the array of matching objects
+    # Process child elements
+    if ($Element.HasChildNodes) {
+        $childElements = $Element.ChildNodes
+
+        if ($childElements.Count -gt 0) {
+            $childHashtable = @{}
+
+            foreach ($child in $childElements) {
+                 if ($child.NodeType -eq "Element") {  # Process only element nodes
+                    $childTag = $child.Name
+                    $childData = Convert-XmlElementToHashtable -Element $child
+
+                    if ($childTag -in $childHashtable.Keys) {
+                        if ($childHashtable[$childTag] -isnot [System.Array]) {
+                            $childHashtable[$childTag] = @($childHashtable[$childTag]) # convert to array
+                        }
+                        $childHashtable[$childTag] += $childData
+                    }
+                    else {
+                        $childHashtable[$childTag] = $childData
+                    }
+                }
+                 elseif ($child.NodeType -eq "Text") {  # Handle text nodes (leaf nodes)
+                    if ($child.InnerText) {
+                         $hashtable["value"] = $child.InnerText  # Store text content in "value" key
+                    }
+
+                }
+            }
+           if ($childHashtable.Count -gt 0) {
+                $hashtable.AddRange($childHashtable)
+            }
+        }
+        elseif ($Element.InnerText){
+            $hashtable["value"]=$Element.InnerText
+        }
+    }
+
+    return $hashtable
 }
+
+
+# XML string
+$xmlString = @"
+<report xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" report_name="MyReport">
+  <table1>
+    <table1_Group1_collection>
+      <record field1="value1" field2="value2"/>
+      <record field1="value3" field2="value4"/>
+    </table1_Group1_collection>
+  </table1>
+</report>
+"@
+
+# Convert XML string to XML object
+$xmlDocument = [xml]$xmlString
+
+# Get the root element
+$rootElement = $xmlDocument.report  # Access the root element directly
+
+# Convert the XML to a hashtable
+$dataHashtable = Convert-XmlElementToHashtable -Element $rootElement
+
+# Convert hashtable to JSON
+$jsonData = $dataHashtable | ConvertTo-Json -Depth 10
+
+# Output the JSON data
+Write-Host $jsonData
