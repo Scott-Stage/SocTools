@@ -18,10 +18,15 @@ function findAllObjectsWithValueInReport(obj, targetValue) {
     }
   }
 
-  // Check if the root object has a "report" property and search within it
-  if (obj && obj.hasOwnProperty('report') && typeof obj.report === 'object' && obj.report !== null) {
-    searchInReport(obj.report); // Start the search within the report object
-  }
+  //Iterates over root
+    for (const key in obj) {
+      if (obj.hasOwnProperty(key)) {
+         if(key === 'report' && typeof obj[key] === 'object' && obj[key] !== null){
+            searchInReport(obj[key]); // Search
+         }
+      }
+    }
+
 
   return results; // Return the array of matching objects
 }
