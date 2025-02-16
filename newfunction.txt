@@ -1,83 +1,22 @@
-# Function to convert XML element to a hashtable (PowerShell's equivalent of a dictionary)
-function Convert-XmlElementToHashtable {
-    param(
-        [xml]$Element
-    )
+# XML File Path
+$xmlFilePath = "C:\path\to\your\your_file.xml"  # Replace with the actual path to your XML file
 
-    $hashtable = @{}
+try {
+    # Read XML file and convert to XML object
+    $xmlString = Get-Content -Path $xmlFilePath -Raw
+    $xmlDocument = [xml]$xmlString
 
-    # Add attributes to the hashtable
-    if ($Element.Attributes) {
-        foreach ($attribute in $Element.Attributes) {
-            $hashtable[$attribute.Name] = $attribute.Value
-        }
-    }
+    # Get the root element
+    $rootElement = $xmlDocument.report #Adjusted to access the 'report' root.  Change if needed
+    # Convert the XML to a hashtable
+    $dataHashtable = Convert-XmlElementToHashtable -Element $rootElement
 
-    # Process child elements
-    if ($Element.HasChildNodes) {
-        $childElements = $Element.ChildNodes
+    # Convert hashtable to JSON
+    $jsonData = $dataHashtable | ConvertTo-Json -Depth 10
 
-        if ($childElements.Count -gt 0) {
-            $childHashtable = @{}
-
-            foreach ($child in $childElements) {
-                 if ($child.NodeType -eq "Element") {  # Process only element nodes
-                    $childTag = $child.Name
-                    $childData = Convert-XmlElementToHashtable -Element $child
-
-                    if ($childTag -in $childHashtable.Keys) {
-                        if ($childHashtable[$childTag] -isnot [System.Array]) {
-                            $childHashtable[$childTag] = @($childHashtable[$childTag]) # convert to array
-                        }
-                        $childHashtable[$childTag] += $childData
-                    }
-                    else {
-                        $childHashtable[$childTag] = $childData
-                    }
-                }
-                 elseif ($child.NodeType -eq "Text") {  # Handle text nodes (leaf nodes)
-                    if ($child.InnerText) {
-                         $hashtable["value"] = $child.InnerText  # Store text content in "value" key
-                    }
-
-                }
-            }
-           if ($childHashtable.Count -gt 0) {
-                $hashtable.AddRange($childHashtable)
-            }
-        }
-        elseif ($Element.InnerText){
-            $hashtable["value"]=$Element.InnerText
-        }
-    }
-
-    return $hashtable
+    # Output the JSON data
+    Write-Host $jsonData
 }
-
-
-# XML string
-$xmlString = @"
-<report xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" report_name="MyReport">
-  <table1>
-    <table1_Group1_collection>
-      <record field1="value1" field2="value2"/>
-      <record field1="value3" field2="value4"/>
-    </table1_Group1_collection>
-  </table1>
-</report>
-"@
-
-# Convert XML string to XML object
-$xmlDocument = [xml]$xmlString
-
-# Get the root element
-$rootElement = $xmlDocument.report  # Access the root element directly
-
-# Convert the XML to a hashtable
-$dataHashtable = Convert-XmlElementToHashtable -Element $rootElement
-
-# Convert hashtable to JSON
-$jsonData = $dataHashtable | ConvertTo-Json -Depth 10
-
-# Output the JSON data
-Write-Host $jsonData
+catch {
+    Write-Error "Error reading or processing XML file: $($_.Exception.Message)"
+}
