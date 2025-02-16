@@ -8,31 +8,39 @@ function Convert-XmlToJson {
     # Get the root element
     $rootElement = $XmlInput.DocumentElement
 
-    # Get the root element's attributes
-    foreach ($attribute in $rootElement.Attributes) {
-        $JsonObject[$attribute.Name] = $attribute.Value
-    }
+    # Iterate through the child nodes of the root element
+    foreach ($childNode in $rootElement.ChildNodes) {
+        if ($childNode.NodeType -eq "Element") {
+            # Check if the child node has attributes
+            if ($childNode.HasAttributes) {
+                $childName = $childNode.Name
+                $item = [ordered] @{}
+                #Get every attribute
+                foreach ($attribute in $childNode.Attributes) {
+                    $item[$attribute.Name] = $attribute.Value
+                }
 
-    # Process the 'data' element (if it exists)
-    $dataElement = $rootElement.SelectSingleNode("data") # More robustly find the data element
+                $JsonObject[$childName] = $item #Add to the JsonObject
 
-    if ($dataElement) {
-        # Loop through the 'item' elements within the 'data' element
-        foreach ($itemNode in $dataElement.SelectNodes("item")) {
-            $itemName = $itemNode.GetAttribute("name")
-            $item = [ordered] @{
-                "id" = $itemNode.GetAttribute("id")
-                "value" = $itemNode.GetAttribute("value")
             }
-            $JsonObject[$itemName] = $item
+             else{
+                #Handle empty elements
+
+                 $childName = $childNode.Name
+                 $JsonObject[$childName]= "" #set to empty
+
+             }
+
+
         }
     }
 
     return ConvertTo-Json -InputObject $JsonObject -Depth 10
 }
 
-# Example usage
-$xmlFilePath = "C:\Users\Scott\Desktop\test.xml"  # Replace with your XML file path
+
+# Example usage:
+$xmlFilePath = "C:\Users\Scott\Desktop\test.xml" # Replace with your XML file path
 
 try {
     $xmlContent = Get-Content -Path $xmlFilePath -Raw
