@@ -1,6 +1,6 @@
 function findAllObjectsWithValueInReport(obj, targetValue) {
   const results = [];
-  const lowerTargetValue = targetValue.toLowerCase(); // Convert targetValue to lowercase once for efficiency
+  const targetTerms = targetValue.toLowerCase().split(/[\s\n]+/); // Split targetValue into terms and lowercase them
 
   // Function to search within the "report" node
   function searchInReport(reportObj) {
@@ -8,21 +8,29 @@ function findAllObjectsWithValueInReport(obj, targetValue) {
       if (reportObj.hasOwnProperty(key)) {
         const value = reportObj[key];
 
-        // console.log(`Checking key: ${key}, value:`, value); // Debugging: See what's being processed
-
         if (typeof value === 'string') {
-          // console.log(`String value found: ${value}`); // Debugging: Confirm string values are found
-          const parts = value.split(/[\s\n]+/); // Split by spaces and newlines
+          const reportParts = value.toLowerCase().split(/[\s\n]+/); // Split report string values and lowercase them
+          let allTermsFound = true; // Assume all target terms are found initially
 
-          for (const part of parts) {
-            const lowerPart = part.toLowerCase(); // Convert part to lowercase for case-insensitive comparison
-            // console.log(`  Checking part: ${part}, lowercase part: ${lowerPart}`); // Debugging: See parts and their lowercase versions
-            if (lowerPart === lowerTargetValue) {
-              // console.log(`    Match found for part: ${part}, targetValue: ${targetValue}`); // Debugging: Confirm match
-              results.push(reportObj);
-              return; // Stop searching in this string once a match is found (optimization, can remove if needed to find all matches within a string)
+          for (const targetTerm of targetTerms) {
+            let termFoundInReport = false;
+            for (const reportPart of reportParts) {
+              if (reportPart === targetTerm) {
+                termFoundInReport = true;
+                break; // Found the current targetTerm in the report string, move to next targetTerm
+              }
+            }
+            if (!termFoundInReport) {
+              allTermsFound = false; // If any targetTerm is NOT found, set flag to false
+              break; // No need to check further targetTerms for this report string
             }
           }
+
+          if (allTermsFound) {
+            results.push(reportObj); // Only add the object if ALL targetTerms were found
+            return; // Optimization: Stop searching in this string once all terms are confirmed
+          }
+
         } else if (typeof value === 'object' && value !== null) {
           searchInReport(value); // Recursive call for nested objects
         }
@@ -34,7 +42,7 @@ function findAllObjectsWithValueInReport(obj, targetValue) {
     for (const key in obj) {
       if (obj.hasOwnProperty(key)) {
          if(key === 'report' && typeof obj[key] === 'object' && obj[key] !== null){
-            searchInReport(obj[key]); // Search within the 'report' node
+            searchInReport(obj[key]); // Search
          }
       }
     }
