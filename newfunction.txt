@@ -7,12 +7,18 @@ function findAllObjectsWithValueInReport(obj, targetValue) {
       if (reportObj.hasOwnProperty(key)) {
         const value = reportObj[key];
 
-        if (value === targetValue) {
-          results.push(reportObj); // Found a match, add the object to results
+        if (typeof value === 'string') {
+          // Split the string value by spaces and newlines
+          const parts = value.split(/[\s\n]+/); // Regex to split by one or more whitespace characters (space, newline, tab, etc.)
+
+          for (const part of parts) {
+            if (part === targetValue) {
+              results.push(reportObj); // Found a match in a part, add the object to results
+              return; // Stop searching within this string value once a match is found for efficiency (optional, see note below)
+            }
+          }
         } else if (typeof value === 'object' && value !== null) {
           searchInReport(value); // Recursive call for nested objects
-        } else if (typeof value !== 'object' && value === targetValue) {
-          results.push(reportObj);
         }
       }
     }
@@ -26,7 +32,6 @@ function findAllObjectsWithValueInReport(obj, targetValue) {
          }
       }
     }
-
 
   return results; // Return the array of matching objects
 }
