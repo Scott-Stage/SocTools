@@ -1,5 +1,6 @@
 function findAllObjectsWithValueInReport(obj, targetValue) {
   const results = [];
+  const lowerTargetValue = targetValue.toLowerCase(); // Convert targetValue to lowercase once for efficiency
 
   // Function to search within the "report" node
   function searchInReport(reportObj) {
@@ -7,14 +8,19 @@ function findAllObjectsWithValueInReport(obj, targetValue) {
       if (reportObj.hasOwnProperty(key)) {
         const value = reportObj[key];
 
+        // console.log(`Checking key: ${key}, value:`, value); // Debugging: See what's being processed
+
         if (typeof value === 'string') {
-          // Split the string value by spaces and newlines
-          const parts = value.split(/[\s\n]+/); // Regex to split by one or more whitespace characters (space, newline, tab, etc.)
+          // console.log(`String value found: ${value}`); // Debugging: Confirm string values are found
+          const parts = value.split(/[\s\n]+/); // Split by spaces and newlines
 
           for (const part of parts) {
-            if (part === targetValue) {
-              results.push(reportObj); // Found a match in a part, add the object to results
-              return; // Stop searching within this string value once a match is found for efficiency (optional, see note below)
+            const lowerPart = part.toLowerCase(); // Convert part to lowercase for case-insensitive comparison
+            // console.log(`  Checking part: ${part}, lowercase part: ${lowerPart}`); // Debugging: See parts and their lowercase versions
+            if (lowerPart === lowerTargetValue) {
+              // console.log(`    Match found for part: ${part}, targetValue: ${targetValue}`); // Debugging: Confirm match
+              results.push(reportObj);
+              return; // Stop searching in this string once a match is found (optimization, can remove if needed to find all matches within a string)
             }
           }
         } else if (typeof value === 'object' && value !== null) {
@@ -28,7 +34,7 @@ function findAllObjectsWithValueInReport(obj, targetValue) {
     for (const key in obj) {
       if (obj.hasOwnProperty(key)) {
          if(key === 'report' && typeof obj[key] === 'object' && obj[key] !== null){
-            searchInReport(obj[key]); // Search
+            searchInReport(obj[key]); // Search within the 'report' node
          }
       }
     }
