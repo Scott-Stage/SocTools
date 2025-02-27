@@ -1,53 +1,35 @@
 function findAllObjectsWithValueInReport(obj, targetValue) {
   const results = [];
   const targetTerms = targetValue.toLowerCase().split(/[\s\n]+/);
-  console.log("Target Terms:", targetTerms); // DEBUG: See the split target terms
 
-  // Function to search within the "report" node
+  // Function to search within the "report" node for target terms
   function searchInReport(reportObj) {
-    for (const key in reportObj) {
-      if (reportObj.hasOwnProperty(key)) {
-        const value = reportObj[key];
-        console.log(`Checking Key: ${key}, Value:`, value); // DEBUG: Check current key and value
+    const foundTerms = new Set(); // Keep track of terms found in THIS object and its children
 
-        if (typeof value === 'string') {
-          const reportParts = value.toLowerCase().split(/[\s\n]+/);
-          console.log(`  String Value Found: ${value}`); // DEBUG: String value detected
-          console.log(`  Report Parts:`, reportParts); // DEBUG: See the split report parts
-          let allTermsFound = true;
+    function findTermsRecursive(currentObj) {
+      for (const key in currentObj) {
+        if (currentObj.hasOwnProperty(key)) {
+          const value = currentObj[key];
 
-          for (const targetTerm of targetTerms) {
-            console.log(`    Checking Target Term: ${targetTerm}`); // DEBUG: Current target term
-            let termFoundInReport = false;
-            for (const reportPart of reportParts) {
-              console.log(`      Comparing Report Part: ${reportPart} with Target Term: ${targetTerm}`); // DEBUG: Comparison
-              if (reportPart === targetTerm) {
-                console.log(`      Match Found! Report Part: ${reportPart} === Target Term: ${targetTerm}`); // DEBUG: Match confirmed
-                termFoundInReport = true;
-                break;
+          if (typeof value === 'string') {
+            const reportParts = value.toLowerCase().split(/[\s\n]+/);
+            for (const part of reportParts) {
+              if (targetTerms.includes(part) && !foundTerms.has(part)) {
+                foundTerms.add(part); // Add the found term to the set
               }
             }
-            if (!termFoundInReport) {
-              console.log(`      Target Term NOT Found in Report Parts: ${targetTerm}`); // DEBUG: Term not found
-              allTermsFound = false;
-              break;
-            } else {
-              console.log(`      Target Term FOUND in Report Parts: ${targetTerm}`); // DEBUG: Term found
-            }
+          } else if (typeof value === 'object' && value !== null) {
+            findTermsRecursive(value); // Recursive call for nested objects
           }
-
-          if (allTermsFound) {
-            console.log(`  ALL Target Terms Found for object:`, reportObj); // DEBUG: All terms found for object
-            results.push(reportObj);
-            return; // Optimization
-          } else {
-            console.log(`  NOT ALL Target Terms Found for object.`); // DEBUG: Not all terms found
-          }
-
-        } else if (typeof value === 'object' && value !== null) {
-          searchInReport(value);
         }
       }
+    }
+
+    findTermsRecursive(reportObj); // Start recursive search within the current report object
+
+    // Check if ALL target terms were found within THIS object
+    if (targetTerms.every(term => foundTerms.has(term))) {
+      results.push(reportObj);
     }
   }
 
@@ -60,6 +42,5 @@ function findAllObjectsWithValueInReport(obj, targetValue) {
       }
     }
 
-  console.log("Final Results:", results); // DEBUG: See final results
   return results;
 }
