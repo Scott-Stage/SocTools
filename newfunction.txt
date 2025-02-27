@@ -2,45 +2,54 @@ function findAllObjectsWithValueInReport(obj, targetValue) {
   const results = [];
   const targetTerms = targetValue.toLowerCase().split(/[\s\n]+/);
 
-  // Function to search within the "report" node for target terms
-  function searchInReport(reportObj) {
-    const foundTerms = new Set(); // Keep track of terms found in THIS object and its children
+  // Recursive function to search for matching branches
+  function searchBranch(currentObj) {
+    const matchingBranches = []; // Array to store matching branches found at this level and below
+    let foundTermsInCurrentObj = new Set(); // Terms found directly in THIS object (not in children)
 
-    function findTermsRecursive(currentObj) {
-      for (const key in currentObj) {
-        if (currentObj.hasOwnProperty(key)) {
-          const value = currentObj[key];
-
-          if (typeof value === 'string') {
-            const reportParts = value.toLowerCase().split(/[\s\n]+/);
-            for (const part of reportParts) {
-              if (targetTerms.includes(part) && !foundTerms.has(part)) {
-                foundTerms.add(part); // Add the found term to the set
-              }
+    // First, check for terms directly within the current object's string values
+    for (const key in currentObj) {
+      if (currentObj.hasOwnProperty(key)) {
+        const value = currentObj[key];
+        if (typeof value === 'string') {
+          const reportParts = value.toLowerCase().split(/[\s\n]+/);
+          for (const part of reportParts) {
+            if (targetTerms.includes(part)) {
+              foundTermsInCurrentObj.add(part);
             }
-          } else if (typeof value === 'object' && value !== null) {
-            findTermsRecursive(value); // Recursive call for nested objects
           }
         }
       }
     }
 
-    findTermsRecursive(reportObj); // Start recursive search within the current report object
-
-    // Check if ALL target terms were found within THIS object
-    if (targetTerms.every(term => foundTerms.has(term))) {
-      results.push(reportObj);
+    // Check if ALL target terms are found DIRECTLY in this object
+    if (targetTerms.every(term => foundTermsInCurrentObj.has(term))) {
+      matchingBranches.push(currentObj); // Current object itself is a match
     }
+
+    // Recursively search in nested objects
+    for (const key in currentObj) {
+      if (currentObj.hasOwnProperty(key)) {
+        const value = currentObj[key];
+        if (typeof value === 'object' && value !== null) {
+          const childMatchingBranches = searchBranch(value); // Recursive call
+          matchingBranches.push(...childMatchingBranches); // Add any matching branches found in children
+        }
+      }
+    }
+
+    return matchingBranches; // Return all matching branches found at this level and below
   }
 
   //Iterates over root
     for (const key in obj) {
       if (obj.hasOwnProperty(key)) {
          if(key === 'report' && typeof obj[key] === 'object' && obj[key] !== null){
-            searchInReport(obj[key]);
+            results.push(...searchBranch(obj[key])); // Start search from 'report' and add all results to the main results array
          }
       }
     }
 
+
   return results;
-}
+} 
