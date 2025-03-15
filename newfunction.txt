@@ -1,55 +1,89 @@
-function findAllObjectsWithValueInReport(obj, targetValue) {
-  const results = [];
-  const targetTerms = targetValue.toLowerCase().split(/[\s\n]+/);
+function ConvertTo-JsonFromXmlSTJ($XMLData)
+{
+    $xmldoc = [System.Xml.XmlDocument]::new()
+    $xmldoc.LoadXml((Remove-UnknownCharactersFromXML -String $XMLData))
 
-  // Recursive function to search for matching branches
-  function searchBranch(currentObj) {
-    const matchingBranches = []; // Array to store matching branches found at this level and below
-    let foundTermsInCurrentObj = new Set(); // Terms found directly in THIS object (not in children)
+    # Convert XML to a Hashtable (or PSCustomObject for more complex scenarios)
+    $jsonObject = ConvertFrom-XmlToHashtable -XmlNode $xmldoc
 
-    // First, check for terms directly within the current object's string values
-    for (const key in currentObj) {
-      if (currentObj.hasOwnProperty(key)) {
-        const value = currentObj[key];
-        if (typeof value === 'string') {
-          const reportParts = value.toLowerCase().split(/[\s\n]+/);
-          for (const part of reportParts) {
-            if (targetTerms.includes(part)) {
-              foundTermsInCurrentObj.add(part);
+    # Serialize the Hashtable to JSON using System.Text.Json
+    $jsonString = [System.Text.Json.JsonSerializer]::Serialize($jsonObject, [System.Text.Json.JsonSerializerOptions]::new() {WriteIndented = $true})
+
+    # Remove the "@" character from attributes (similar to the original function)
+    return ([Regex]::Replace($jsonString, '"@', '"', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase))
+
+}
+
+function ConvertFrom-XmlToHashtable {
+    param(
+        [Parameter(Mandatory=$true)]
+        [System.Xml.XmlNode]$XmlNode
+    )
+
+    if ($XmlNode.HasChildNodes -and ($XmlNode.ChildNodes.Count -gt 1 -or ($XmlNode.ChildNodes[0].NodeType -ne "Text" -and $XmlNode.ChildNodes[0].NodeType -ne "CDATA"))) {
+        $jsonObject = @{}
+
+        # Process Attributes
+        if ($XmlNode.Attributes) {
+            foreach ($attribute in $XmlNode.Attributes) {
+                $jsonObject."@$($attribute.Name)" = $attribute.Value
             }
-          }
         }
-      }
-    }
 
-    // Check if ALL target terms are found DIRECTLY in this object
-    if (targetTerms.every(term => foundTermsInCurrentObj.has(term))) {
-      matchingBranches.push(currentObj); // Current object itself is a match
-    }
+        # Process Child Nodes
+        foreach ($childNode in $XmlNode.ChildNodes) {
+            if ($childNode.NodeType -eq "Element") {
+                $childName = $childNode.Name
+                $childValue = ConvertFrom-XmlToHashtable -XmlNode $childNode
 
-    // Recursively search in nested objects
-    for (const key in currentObj) {
-      if (currentObj.hasOwnProperty(key)) {
-        const value = currentObj[key];
-        if (typeof value === 'object' && value !== null) {
-          const childMatchingBranches = searchBranch(value); // Recursive call
-          matchingBranches.push(...childMatchingBranches); // Add any matching branches found in children
+                if ($jsonObject.ContainsKey($childName)) {
+                    # Handle multiple elements with the same name as an array
+                    if ($jsonObject.$childName -isnot [System.Array]) {
+                        $jsonObject.$childName = @($jsonObject.$childName)
+                    }
+                    $jsonObject.$childName += $childValue
+                } else {
+                    $jsonObject.$childName = $childValue
+                }
+            } elseif ($childNode.NodeType -eq "Text" -or $childNode.NodeType -eq "CDATA") {
+                # If it's just text content and the parent has no attributes and only one text child, return just the text.
+                if (!$XmlNode.Attributes -and $XmlNode.ChildNodes.Count -eq 1) {
+                    return $childNode.InnerText.Trim()
+                } else { # Otherwise, treat it as #text node (similar to Newtonsoft in some scenarios, though STJ is more flexible)
+                    if ($jsonObject.ContainsKey("#text")) {
+                        if ($jsonObject."#text" -isnot [System.Array]) {
+                            $jsonObject."#text" = @($jsonObject."#text")
+                        }
+                        $jsonObject."#text" += $childNode.InnerText.Trim()
+                    } else {
+                        $jsonObject."#text" = $childNode.InnerText.Trim()
+                    }
+                }
+            }
         }
-      }
+        return $jsonObject
+    } elseif ($XmlNode.NodeType -eq "Element" -and !$XmlNode.HasChildNodes -and $XmlNode.Attributes) {
+        # Element with only attributes and no child nodes
+        $jsonObject = @{}
+        foreach ($attribute in $XmlNode.Attributes) {
+            $jsonObject."@$($attribute.Name)" = $attribute.Value
+        }
+        return $jsonObject
+
     }
-
-    return matchingBranches; // Return all matching branches found at this level and below
-  }
-
-  //Iterates over root
-    for (const key in obj) {
-      if (obj.hasOwnProperty(key)) {
-         if(key === 'report' && typeof obj[key] === 'object' && obj[key] !== null){
-            results.push(...searchBranch(obj[key])); // Start search from 'report' and add all results to the main results array
-         }
-      }
+    else {
+        # Text node or empty element
+        return $XmlNode.InnerText.Trim()
     }
+}
 
 
-  return results;
-} 
+# Example Usage (assuming you have Remove-UnknownCharactersFromXML defined or can remove the call for testing):
+# Function to remove unknown characters (you might have your own implementation, this is a basic example)
+function Remove-UnknownCharactersFromXML {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$String
+    )
+    return $String # In a real scenario, you'd implement character removal logic here.
+}
