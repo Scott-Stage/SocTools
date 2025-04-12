@@ -2,6 +2,9 @@ import os
 import re
 import string
 
+# --- Configuration ---
+DEBUG = False # Set to True to see detailed comparison steps
+
 def read_software_list(filepath):
     """Reads a software list from a file, one item per line."""
     try:
@@ -32,20 +35,31 @@ def normalize_name(name):
         return ""
     return ' '.join(unique_sorted_tokens)
 
+def calculate_jaccard_distance(set1, set2):
+    """ Calculates Jaccard distance: len(symm_diff) / len(union) """
+    sym_diff = set1.symmetric_difference(set2)
+    union = set1.union(set2)
+    if not union: # Avoid division by zero if both sets are empty
+        return 0.0
+    return len(sym_diff) / len(union)
+
+
 def compare_lists(my_software_list, db_software_list):
     """
-    Compares lists with specific Full and Partial match criteria.
+    Compares lists with Full/Partial match criteria and % difference for partials.
     - Full Match: Symmetric Difference <= 1 token.
-    - Partial Match: Proper subset relationship AND subset size >= 2 tokens.
+    - Partial Match: Proper subset (size >= 2) AND Not Full Match.
 
-    Returns a dictionary with 'full_matches', 'partial_matches', 'not_found'.
+    Returns dict with 'full_matches', 'partial_matches', 'not_found'.
+    Partial matches include min Jaccard distance percentage.
     """
     if my_software_list is None or db_software_list is None:
         return None
 
     # --- Prepare Database Data ---
-    db_normalized_map = {} # Maps normalized string -> list of original DB entries
-    db_token_sets = {}     # Maps normalized string -> set of unique tokens
+    db_normalized_map = {}
+    db_token_sets = {}
+    print("Normalizing database entries...")
     for db_item in db_software_list:
         normalized = normalize_name(db_item)
         if normalized:
@@ -53,82 +67,108 @@ def compare_lists(my_software_list, db_software_list):
                 db_normalized_map[normalized] = []
                 db_token_sets[normalized] = set(filter(None, normalized.split()))
             db_normalized_map[normalized].append(db_item)
+    if DEBUG: print(f"Normalized DB forms: {list(db_token_sets.keys())}")
 
     # --- Initialize Results ---
     results = {
-        'full_matches': [],         # List of original 'my_sw' items
-        'partial_matches': {},      # Dict: {orig 'my_sw': [orig 'db_sw' matches]}
-        'not_found': []             # List of original 'my_sw' items
+        'full_matches': [],
+        'partial_matches': {}, # Dict: {orig 'my_sw': {'db_matches': [], 'min_diff_percent': float}}
+        'not_found': []
     }
-
-    processed_my_software_originals = set() # Track original names from my list
+    processed_my_software_originals = set()
 
     # --- Compare Each Item in My List ---
-    for my_sw_orig in my_software_list:
+    print("\nComparing your software list...")
+    for i, my_sw_orig in enumerate(my_software_list):
         if my_sw_orig in processed_my_software_originals:
+            if DEBUG: print(f"\nSkipping duplicate entry: '{my_sw_orig}'")
             continue
 
+        if DEBUG: print(f"\n--- Comparing Your Software ({i+1}): '{my_sw_orig}' ---")
         my_sw_norm = normalize_name(my_sw_orig)
 
         if not my_sw_norm:
+            if DEBUG: print(f"  Normalized to empty, classifying as Not Found.")
             results['not_found'].append(my_sw_orig)
             processed_my_software_originals.add(my_sw_orig)
             continue
 
         my_sw_tokens = set(filter(None, my_sw_norm.split()))
         if not my_sw_tokens:
+            if DEBUG: print(f"  Token set empty, classifying as Not Found.")
             results['not_found'].append(my_sw_orig)
             processed_my_software_originals.add(my_sw_orig)
             continue
 
+        if DEBUG: print(f"  Normalized: '{my_sw_norm}' | Tokens: {my_sw_tokens}")
+
         # --- Check Against Database Entries ---
-        current_match_level = 'none' # none, partial, full
-        partial_match_candidates = [] # Store original DB names for potential partial matches
+        current_match_level = 'none'
+        partial_match_candidates = []
+        min_partial_jaccard_dist = 1.1 # Initialize higher than max possible distance (1.0)
+        db_check_counter = 0
 
         for db_norm, db_tokens in db_token_sets.items():
-            if not db_tokens:
-                continue
+            db_check_counter += 1
+            if not db_tokens: continue
 
-            # Calculate symmetric difference
+            if DEBUG: print(f"  Checking against DB entry {db_check_counter}: '{db_norm}' | Tokens: {db_tokens}")
+
             symmetric_difference = my_sw_tokens.symmetric_difference(db_tokens)
+            sym_diff_len = len(symmetric_difference)
+            jaccard_dist = calculate_jaccard_distance(my_sw_tokens, db_tokens)
+
+            if DEBUG: print(f"    Symm Diff: {symmetric_difference} (Size: {sym_diff_len}) | Jaccard Dist: {jaccard_dist:.4f}")
 
             # --- Check for Full Match ---
-            if len(symmetric_difference) <= 1:
+            if sym_diff_len <= 1:
+                if DEBUG: print(f"    --> Full Match found (Symm Diff <= 1).")
                 current_match_level = 'full'
-                # Found the highest priority match for this my_sw, no need to check further
-                break # Exit the inner db_token_sets loop
+                break # Exit inner loop
 
             # --- Check for Partial Match (only if not already a full match) ---
-            # Note: symmetric_difference > 1 implicitly if we reach here
-
             is_proper_subset_my_in_db = my_sw_tokens.issubset(db_tokens) and my_sw_tokens != db_tokens
             is_proper_subset_db_in_my = db_tokens.issubset(my_sw_tokens) and my_sw_tokens != db_tokens
 
             partial_match_criteria_met = False
             if is_proper_subset_my_in_db and len(my_sw_tokens) >= 2:
+                 if DEBUG: print(f"    --> Partial Match criteria met (My tokens >=2 subset of DB tokens).")
                  partial_match_criteria_met = True
             elif is_proper_subset_db_in_my and len(db_tokens) >= 2:
+                 if DEBUG: print(f"    --> Partial Match criteria met (DB tokens >=2 subset of My tokens).")
                  partial_match_criteria_met = True
 
             if partial_match_criteria_met:
-                 # If we find a partial match, record it and potentially upgrade status
-                 if current_match_level != 'full': # Don't downgrade from full
+                 if current_match_level != 'full':
                      current_match_level = 'partial'
                      partial_match_candidates.extend(db_normalized_map[db_norm])
-                 # Continue checking other DB entries in case a Full Match exists
-
+                     # Track the minimum distance found among partial matches
+                     min_partial_jaccard_dist = min(min_partial_jaccard_dist, jaccard_dist)
+                     if DEBUG: print(f"    --> Marking as potential Partial Match. Min Dist so far: {min_partial_jaccard_dist:.4f}. Candidates: {set(partial_match_candidates)}")
+                 else:
+                      if DEBUG: print(f"    --> Partial criteria met, but already found Full match earlier. Ignoring.")
+            elif DEBUG and current_match_level != 'full':
+                 print(f"    --> No Full or Partial match criteria met with this DB entry.")
 
         # --- Categorize Result for my_sw_orig ---
         if current_match_level == 'full':
             results['full_matches'].append(my_sw_orig)
+            if DEBUG: print(f"  FINAL Classification for '{my_sw_orig}': Full Match")
         elif current_match_level == 'partial':
-            # Store unique original DB names that caused partial match
-            results['partial_matches'][my_sw_orig] = sorted(list(set(partial_match_candidates)))
+            # Store results including the minimum percentage difference
+            min_diff_percent = round(min_partial_jaccard_dist * 100, 2)
+            results['partial_matches'][my_sw_orig] = {
+                'db_matches': sorted(list(set(partial_match_candidates))),
+                'min_diff_percent': min_diff_percent
+            }
+            if DEBUG: print(f"  FINAL Classification for '{my_sw_orig}': Partial Match (Min Diff: {min_diff_percent}%, DB Originals: {results['partial_matches'][my_sw_orig]['db_matches']})")
         else: # current_match_level == 'none'
             results['not_found'].append(my_sw_orig)
+            if DEBUG: print(f"  FINAL Classification for '{my_sw_orig}': Not Found")
 
         processed_my_software_originals.add(my_sw_orig)
 
+    print("\nComparison complete.")
     return results
 
 def write_results(output_file, results):
@@ -155,9 +195,12 @@ def write_results(output_file, results):
             f.write("=== Partial Matches Found in Database ===\n")
             f.write("    (One name is proper subset of other & subset size >= 2 tokens; Not a Full Match)\n")
             if results['partial_matches']:
-                for my_sw, db_matches in sorted(results['partial_matches'].items()):
+                # Sort by the original 'my_sw' name
+                for my_sw, match_data in sorted(results['partial_matches'].items()):
+                    db_matches = match_data['db_matches']
+                    percent_diff = match_data['min_diff_percent']
                     f.write(f"- Your Software: {my_sw}\n")
-                    f.write(f"  Potential DB Matches: {', '.join(db_matches)}\n")
+                    f.write(f"  (Min Difference: {percent_diff:.2f}%) Potential DB Matches: {', '.join(db_matches)}\n") # Display percentage
             else:
                 f.write("None\n")
             f.write("\n")
@@ -171,7 +214,7 @@ def write_results(output_file, results):
                 f.write("None\n")
             f.write("\n")
 
-        print(f"Results successfully written to {output_file}")
+        print(f"\nResults successfully written to {output_file}")
 
     except Exception as e:
         print(f"Error writing results to file {output_file}: {e}")
