@@ -1,9 +1,18 @@
 import os
 import re
 import string
+import math # For infinity
 
 # --- Configuration ---
 DEBUG = False # Set to True to see detailed comparison steps
+JACCARD_PROMOTION_THRESHOLD = 0.5 # Threshold (0.0 to 1.0) for promoting partial to full
+
+# --- Column Widths for Output Table ---
+# Adjust these based on your expected data lengths
+WIDTH_MY_SW = 40
+WIDTH_MATCHED_SW = 40
+WIDTH_REASON = 35
+WIDTH_NEAREST = 40
 
 def read_software_list(filepath):
     """Reads a software list from a file, one item per line."""
@@ -19,20 +28,15 @@ def read_software_list(filepath):
         return None
 
 def normalize_name(name):
-    """
-    Normalizes software name: lowercase, strip whitespace, remove punctuation,
-    remove duplicate words, and rejoin sorted unique words.
-    """
-    if not name:
-        return ""
+    """Normalizes software name."""
+    if not name: return ""
     translator = str.maketrans('', '', string.punctuation)
     name = name.translate(translator)
     name = name.lower().strip()
     name = re.sub(r'\s+', ' ', name)
     tokens = name.split()
     unique_sorted_tokens = sorted(list(set(filter(None, tokens))))
-    if not unique_sorted_tokens:
-        return ""
+    if not unique_sorted_tokens: return ""
     return ' '.join(unique_sorted_tokens)
 
 def calculate_jaccard_distance(set1, set2):
@@ -42,15 +46,12 @@ def calculate_jaccard_distance(set1, set2):
     if not union: return 0.0
     return len(sym_diff) / len(union)
 
-
 def compare_lists(my_software_list, db_software_list):
     """
-    Compares lists with refined Full/Partial match criteria.
-    - Full Match: (Symm Diff <= 1) OR (Partial Criteria Met AND Jaccard Dist <= 0.5).
-    - Partial Match: Partial Criteria Met AND Jaccard Dist > 0.5.
+    Compares lists and gathers detailed results for table output.
+    Returns a list of dictionaries, one for each item in my_software_list.
     """
-    if my_software_list is None or db_software_list is None:
-        return None
+    if my_software_list is None or db_software_list is None: return None
 
     # --- Prepare Database Data ---
     db_normalized_map = {}
@@ -65,17 +66,25 @@ def compare_lists(my_software_list, db_software_list):
             db_normalized_map[normalized].append(db_item)
     if DEBUG: print(f"Normalized DB forms: {list(db_token_sets.keys())}")
 
-    # --- Initialize Results ---
-    results = {
-        'full_matches': [],
-        'partial_matches': {}, # Dict: {orig 'my_sw': {'db_matches': [], 'min_diff_percent': float}}
-        'not_found': []
-    }
+    # --- Initialize Results Storage ---
+    comparison_results = []
     processed_my_software_originals = set()
 
     # --- Compare Each Item in My List ---
     print("\nComparing your software list...")
     for i, my_sw_orig in enumerate(my_software_list):
+        # Basic info for this item's result entry
+        result_entry = {
+            'my_sw_orig': my_sw_orig,
+            'status': 'Not Found', # Default status
+            'matched_db_orig': None,
+            'reason': None,
+            'jaccard': None,
+            'all_partial_db_matches': [], # For partial matches listing
+            'nearest_candidate_orig': None,
+            'nearest_candidate_jaccard': None
+        }
+
         if my_sw_orig in processed_my_software_originals:
             if DEBUG: print(f"\nSkipping duplicate entry: '{my_sw_orig}'")
             continue
@@ -85,26 +94,29 @@ def compare_lists(my_software_list, db_software_list):
 
         if not my_sw_norm:
             if DEBUG: print(f"  Normalized to empty, classifying as Not Found.")
-            results['not_found'].append(my_sw_orig)
+            result_entry['reason'] = "Input normalizes to empty"
+            comparison_results.append(result_entry)
             processed_my_software_originals.add(my_sw_orig)
             continue
 
         my_sw_tokens = set(filter(None, my_sw_norm.split()))
         if not my_sw_tokens:
-            if DEBUG: print(f"  Token set empty, classifying as Not Found.")
-            results['not_found'].append(my_sw_orig)
-            processed_my_software_originals.add(my_sw_orig)
-            continue
+             if DEBUG: print(f"  Token set empty, classifying as Not Found.")
+             result_entry['reason'] = "Input has no valid tokens"
+             comparison_results.append(result_entry)
+             processed_my_software_originals.add(my_sw_orig)
+             continue
 
         if DEBUG: print(f"  Normalized: '{my_sw_norm}' | Tokens: {my_sw_tokens}")
 
-        # --- Check Against Database Entries ---
-        current_match_level = 'none' # none, partial, full
-        partial_match_candidates = []
-        min_partial_jaccard_dist = 1.1 # Initialize > 1.0
-        found_direct_full_match = False # Flag if symm diff <= 1 was met
+        # --- Track comparison details for this item ---
+        found_direct_full_match = False
+        potential_partial_details = [] # List of {'jaccard': ..., 'db_norm': ..., 'reason': ..., 'symm_diff_len': ...}
+        min_overall_jaccard = 1.1
+        best_overall_candidate_norm = None
         db_check_counter = 0
 
+        # --- Inner loop checking against DB ---
         for db_norm, db_tokens in db_token_sets.items():
             db_check_counter += 1
             if not db_tokens: continue
@@ -115,117 +127,175 @@ def compare_lists(my_software_list, db_software_list):
             sym_diff_len = len(symmetric_difference)
             jaccard_dist = calculate_jaccard_distance(my_sw_tokens, db_tokens)
 
+            # Track nearest overall candidate
+            if jaccard_dist < min_overall_jaccard:
+                 min_overall_jaccard = jaccard_dist
+                 best_overall_candidate_norm = db_norm
+
             if DEBUG: print(f"    Symm Diff: {symmetric_difference} (Size: {sym_diff_len}) | Jaccard Dist: {jaccard_dist:.4f}")
 
-            # --- Check for Direct Full Match (Symm Diff <= 1 takes precedence) ---
+            # --- Check for Direct Full Match (Priority 1) ---
             if sym_diff_len <= 1:
                 if DEBUG: print(f"    --> Direct Full Match found (Symm Diff <= 1).")
-                current_match_level = 'full'
+                result_entry['status'] = 'Full Match'
+                # Take the first DB original associated with this norm
+                result_entry['matched_db_orig'] = db_normalized_map[db_norm][0]
+                result_entry['reason'] = f"Symmetric Diff <= 1 (Size={sym_diff_len})"
+                result_entry['jaccard'] = jaccard_dist
                 found_direct_full_match = True
-                break # Exit inner loop, highest priority match found
+                break # Exit inner loop
 
-            # --- Check for Partial Match Criteria (only if direct full match not found yet) ---
+            # --- Check for Potential Partial Criteria ---
+            criterion_A = (sym_diff_len == 2)
             is_proper_subset_my_in_db = my_sw_tokens.issubset(db_tokens) and my_sw_tokens != db_tokens
             is_proper_subset_db_in_my = db_tokens.issubset(my_sw_tokens) and my_sw_tokens != db_tokens
+            criterion_B = (is_proper_subset_my_in_db and len(my_sw_tokens) >= 2) or \
+                          (is_proper_subset_db_in_my and len(db_tokens) >= 2)
 
-            partial_match_criteria_met = False
-            if is_proper_subset_my_in_db and len(my_sw_tokens) >= 2:
-                 if DEBUG: print(f"    --> Partial Match criteria met (My tokens >=2 subset of DB tokens).")
-                 partial_match_criteria_met = True
-            elif is_proper_subset_db_in_my and len(db_tokens) >= 2:
-                 if DEBUG: print(f"    --> Partial Match criteria met (DB tokens >=2 subset of My tokens).")
-                 partial_match_criteria_met = True
+            partial_reason = None
+            if criterion_A:
+                partial_reason = "Symmetric Diff == 2"
+            if criterion_B:
+                 # If both A and B, prefer subset reason? Or mention both? Let's prioritize subset.
+                 partial_reason = "Subset >= 2 tokens" # Overwrites Symm Diff 2 if both true
 
-            if partial_match_criteria_met:
-                 # This comparison meets the partial criteria. Record its details.
-                 current_match_level = 'partial' # Mark that we found at least one partial
-                 partial_match_candidates.extend(db_normalized_map[db_norm])
-                 min_partial_jaccard_dist = min(min_partial_jaccard_dist, jaccard_dist)
-                 if DEBUG: print(f"    --> Recording potential Partial Match. Min Dist so far: {min_partial_jaccard_dist:.4f}. Candidates: {set(partial_match_candidates)}")
+            if partial_reason:
+                 potential_partial_details.append({
+                     'jaccard': jaccard_dist,
+                     'db_norm': db_norm,
+                     'reason': partial_reason,
+                     'symm_diff_len': sym_diff_len # Store just in case
+                 })
+                 if DEBUG: print(f"    --> Recording potential Partial Match details (Reason: {partial_reason}, Jaccard: {jaccard_dist:.4f}, DB Norm: {db_norm}).")
             elif DEBUG:
-                 print(f"    --> No Full or Partial match criteria met with this DB entry.")
+                 print(f"    --> No Full or Potential Partial match criteria met with this DB entry.")
 
-            # NOTE: Inner loop continues even if partial found, to check all DB entries for a potential direct full match.
 
-        # --- Categorize Result for my_sw_orig (After checking all DB entries) ---
-        if found_direct_full_match: # Highest priority
-            results['full_matches'].append(my_sw_orig)
-            if DEBUG: print(f"  FINAL Classification for '{my_sw_orig}': Full Match (Direct Symm Diff <= 1)")
-        elif current_match_level == 'partial':
-            # We found partial matches, but no direct full match. Now check Jaccard distance.
-            if min_partial_jaccard_dist <= 0.5: # Reclassify as Full Match based on threshold
-                results['full_matches'].append(my_sw_orig)
-                if DEBUG: print(f"  FINAL Classification for '{my_sw_orig}': Full Match (Promoted from Partial, Min Jaccard Dist <= 50%)")
-            else: # Keep as Partial Match
-                min_diff_percent = round(min_partial_jaccard_dist * 100, 2)
-                results['partial_matches'][my_sw_orig] = {
-                    'db_matches': sorted(list(set(partial_match_candidates))),
-                    'min_diff_percent': min_diff_percent
-                }
-                if DEBUG: print(f"  FINAL Classification for '{my_sw_orig}': Partial Match (Min Diff: {min_diff_percent}%, Jaccard > 50%)")
-        else: # current_match_level == 'none'
-            results['not_found'].append(my_sw_orig)
-            if DEBUG: print(f"  FINAL Classification for '{my_sw_orig}': Not Found")
+        # --- Final Classification Logic (After checking all DB) ---
+        if not found_direct_full_match:
+            if potential_partial_details:
+                # Find the potential partial with the minimum Jaccard distance
+                best_potential = min(potential_partial_details, key=lambda x: x['jaccard'])
+                min_partial_jaccard = best_potential['jaccard']
+                best_partial_reason = best_potential['reason']
+                best_partial_db_norm = best_potential['db_norm'] # Norm of the best partial
 
+                # Collect original names for ALL potential partials for listing
+                all_partial_db_origs = set()
+                for detail in potential_partial_details:
+                    all_partial_db_origs.update(db_normalized_map[detail['db_norm']])
+                result_entry['all_partial_db_matches'] = sorted(list(all_partial_db_origs))
+
+                if DEBUG: print(f"  Potential partial matches found. Min Jaccard Distance: {min_partial_jaccard:.4f} (Reason: {best_partial_reason})")
+
+                # Check threshold for promotion
+                if min_partial_jaccard <= JACCARD_PROMOTION_THRESHOLD:
+                    result_entry['status'] = 'Full Match'
+                    # Use the best potential match for the table entry
+                    result_entry['matched_db_orig'] = db_normalized_map[best_partial_db_norm][0]
+                    result_entry['reason'] = f"Promoted ({best_partial_reason}, Jaccard={min_partial_jaccard:.2f})"
+                    result_entry['jaccard'] = min_partial_jaccard
+                    if DEBUG: print(f"  FINAL Classification for '{my_sw_orig}': Full Match (Promoted)")
+                else: # Keep as Partial Match
+                    result_entry['status'] = 'Partial Match'
+                     # Use the best potential match details for the 'reason' column
+                    result_entry['matched_db_orig'] = db_normalized_map[best_partial_db_norm][0] # Represented by best match
+                    result_entry['reason'] = f"{best_partial_reason}, Jaccard={min_partial_jaccard:.2f}"
+                    result_entry['jaccard'] = min_partial_jaccard
+                    if DEBUG: print(f"  FINAL Classification for '{my_sw_orig}': Partial Match")
+            else:
+                # No direct full match, no potential partials -> Not Found
+                result_entry['status'] = 'Not Found'
+                if best_overall_candidate_norm:
+                     result_entry['nearest_candidate_orig'] = db_normalized_map[best_overall_candidate_norm][0]
+                     result_entry['nearest_candidate_jaccard'] = min_overall_jaccard
+                     result_entry['reason'] = f"Nearest Jaccard={min_overall_jaccard:.2f}"
+                else: # Should not happen if db list is not empty
+                     result_entry['reason'] = "No DB entries to compare"
+                if DEBUG: print(f"  FINAL Classification for '{my_sw_orig}': Not Found")
+        elif DEBUG: # Case: Direct full match was found
+             print(f"  FINAL Classification for '{my_sw_orig}': Full Match (Direct)")
+
+        comparison_results.append(result_entry)
         processed_my_software_originals.add(my_sw_orig)
 
     print("\nComparison complete.")
-    return results
+    return comparison_results
 
-def write_results(output_file, results):
-    """Writes the categorized results to a file."""
-    if results is None:
+
+def write_results_table(output_file, comparison_results):
+    """Writes the categorized results to a file in table format."""
+    if comparison_results is None:
         print("Skipping writing results due to previous errors.")
         return
 
+    full_matches = sorted([r for r in comparison_results if r['status'] == 'Full Match'], key=lambda x: x['my_sw_orig'])
+    partial_matches = sorted([r for r in comparison_results if r['status'] == 'Partial Match'], key=lambda x: x['my_sw_orig'])
+    not_found = sorted([r for r in comparison_results if r['status'] == 'Not Found'], key=lambda x: x['my_sw_orig'])
+
     try:
         with open(output_file, 'w', encoding='utf-8') as f:
-            f.write("=" * 40 + "\n")
             f.write("Software Comparison Results\n")
-            f.write("=" * 40 + "\n\n")
+            f.write("=" * (WIDTH_MY_SW + WIDTH_MATCHED_SW + WIDTH_REASON + 6) + "\n\n") # Adjust total width
 
-            f.write("=== Full Matches Found in Database ===\n")
-            f.write("    (Criteria: Unique token sets differ by <=1 token OR \n")
-            f.write("     Partial Match criteria met with Min Jaccard Distance <= 50%)\n")
-            if results['full_matches']:
-                for item in sorted(results['full_matches']):
-                    f.write(f"- {item}\n")
+            # --- Full Matches Table ---
+            f.write("=== Full Matches ===\n")
+            header = f"{'Your Software':<{WIDTH_MY_SW}} | {'Matched DB Entry':<{WIDTH_MATCHED_SW}} | {'Reason':<{WIDTH_REASON}}"
+            f.write(header + "\n")
+            f.write("-" * len(header) + "\n")
+            if full_matches:
+                for item in full_matches:
+                    my_sw = item['my_sw_orig'][:WIDTH_MY_SW]
+                    matched_db = (item['matched_db_orig'] or "N/A")[:WIDTH_MATCHED_SW]
+                    reason = (item['reason'] or "N/A")[:WIDTH_REASON]
+                    f.write(f"{my_sw:<{WIDTH_MY_SW}} | {matched_db:<{WIDTH_MATCHED_SW}} | {reason:<{WIDTH_REASON}}\n")
             else:
                 f.write("None\n")
             f.write("\n")
 
-            f.write("=== Partial Matches Found in Database ===\n")
-            f.write("    (Criteria: One name proper subset (size>=2) of other; Not a Full Match;\n")
-            f.write("     AND Min Jaccard Distance > 50%)\n")
-            if results['partial_matches']:
-                for my_sw, match_data in sorted(results['partial_matches'].items()):
-                    db_matches = match_data['db_matches']
-                    percent_diff = match_data['min_diff_percent']
-                    f.write(f"- Your Software: {my_sw}\n")
-                    f.write(f"  (Min Difference: {percent_diff:.2f}%) Potential DB Matches: {', '.join(db_matches)}\n")
+            # --- Partial Matches Table ---
+            f.write("=== Partial Matches ===\n")
+            header = f"{'Your Software':<{WIDTH_MY_SW}} | {'Potential DB Matches':<{WIDTH_MATCHED_SW}} | {'Best Match Reason':<{WIDTH_REASON}}"
+            f.write(header + "\n")
+            f.write("-" * len(header) + "\n")
+            if partial_matches:
+                for item in partial_matches:
+                    my_sw = item['my_sw_orig'][:WIDTH_MY_SW]
+                    # Join all potential matches, truncate if needed
+                    matches_str = (', '.join(item['all_partial_db_matches']) if item['all_partial_db_matches'] else "N/A")
+                    matches_display = (matches_str[:WIDTH_MATCHED_SW-3] + "...") if len(matches_str) > WIDTH_MATCHED_SW else matches_str
+                    reason = (item['reason'] or "N/A")[:WIDTH_REASON]
+                    f.write(f"{my_sw:<{WIDTH_MY_SW}} | {matches_display:<{WIDTH_MATCHED_SW}} | {reason:<{WIDTH_REASON}}\n")
             else:
                 f.write("None\n")
             f.write("\n")
 
-            f.write("=== Software NOT Found in Database ===\n")
-            f.write("    (No DB entry met Full or Partial match criteria)\n")
-            if results['not_found']:
-                for item in sorted(results['not_found']):
-                    f.write(f"- {item}\n")
+            # --- No Matches Table ---
+            f.write("=== No Matches Found ===\n")
+            header = f"{'Your Software':<{WIDTH_MY_SW}} | {'Nearest DB Candidate':<{WIDTH_NEAREST}} | {'Reason (Nearest Candidate)':<{WIDTH_REASON}}"
+            f.write(header + "\n")
+            f.write("-" * len(header) + "\n")
+            if not_found:
+                for item in not_found:
+                    my_sw = item['my_sw_orig'][:WIDTH_MY_SW]
+                    nearest = (item['nearest_candidate_orig'] or "None")[:WIDTH_NEAREST]
+                    reason = (item['reason'] or "N/A")[:WIDTH_REASON] # Reason now includes nearest Jaccard
+                    f.write(f"{my_sw:<{WIDTH_MY_SW}} | {nearest:<{WIDTH_NEAREST}} | {reason:<{WIDTH_REASON}}\n")
             else:
                 f.write("None\n")
             f.write("\n")
+
 
         print(f"\nResults successfully written to {output_file}")
 
     except Exception as e:
-        print(f"Error writing results to file {output_file}: {e}")
+        print(f"Error writing results table to file {output_file}: {e}")
 
 # --- Main Execution ---
 if __name__ == "__main__":
     my_software_file = "my_software.txt"
     db_software_file = "database_software.txt"
-    output_result_file = "comparison_results.txt"
+    output_result_file = "comparison_results_table.txt" # New output file name
 
     print(f"Reading your software list from: {my_software_file}")
     my_list = read_software_list(my_software_file)
@@ -234,8 +304,8 @@ if __name__ == "__main__":
     db_list = read_software_list(db_software_file)
 
     if my_list is not None and db_list is not None:
-        print("Comparing lists using specific Full/Partial match criteria with Jaccard threshold...")
-        comparison_results = compare_lists(my_list, db_list)
-        write_results(output_result_file, comparison_results)
+        print(f"Comparing lists (Jaccard promotion threshold: {JACCARD_PROMOTION_THRESHOLD})...")
+        detailed_results = compare_lists(my_list, db_list)
+        write_results_table(output_result_file, detailed_results)
     else:
         print("Comparison cancelled due to errors reading input files.")
