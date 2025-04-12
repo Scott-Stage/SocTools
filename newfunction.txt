@@ -1,6 +1,6 @@
 import os
 import re
-import string # Import string for punctuation handling
+import string
 
 def read_software_list(filepath):
     """Reads a software list from a file, one item per line."""
@@ -22,116 +22,112 @@ def normalize_name(name):
     """
     if not name:
         return ""
-    # Remove punctuation
     translator = str.maketrans('', '', string.punctuation)
     name = name.translate(translator)
-    # Lowercase and strip leading/trailing whitespace
     name = name.lower().strip()
-    # Reduce multiple spaces to single spaces
     name = re.sub(r'\s+', ' ', name)
-    # Split into words, get unique words, sort them, and rejoin
-    # Sorting ensures "word excel" and "excel word" normalize to the same string
     tokens = name.split()
-    unique_sorted_tokens = sorted(list(set(tokens)))
-    # Handle case where splitting results in empty list (e.g., input was only punctuation)
+    unique_sorted_tokens = sorted(list(set(filter(None, tokens))))
     if not unique_sorted_tokens:
         return ""
     return ' '.join(unique_sorted_tokens)
 
 def compare_lists(my_software_list, db_software_list):
     """
-    Compares the user's software list against the database list.
-    - Exact Match: Normalized strings (incl. unique sorted tokens) are identical.
-    - Partial Match: Token sets differ by exactly 1 unique token (symm diff = 1).
+    Compares lists with specific Full and Partial match criteria.
+    - Full Match: Symmetric Difference <= 1 token.
+    - Partial Match: Proper subset relationship AND subset size >= 2 tokens.
 
-    Returns a dictionary containing categorized results.
+    Returns a dictionary with 'full_matches', 'partial_matches', 'not_found'.
     """
     if my_software_list is None or db_software_list is None:
         return None
 
-    # Normalize database list and store originals
-    db_normalized_map = {}
+    # --- Prepare Database Data ---
+    db_normalized_map = {} # Maps normalized string -> list of original DB entries
+    db_token_sets = {}     # Maps normalized string -> set of unique tokens
     for db_item in db_software_list:
         normalized = normalize_name(db_item)
-        if normalized: # Ensure normalization didn't result in empty string
+        if normalized:
             if normalized not in db_normalized_map:
                 db_normalized_map[normalized] = []
-            db_normalized_map[normalized].append(db_item) # Store original name
+                db_token_sets[normalized] = set(filter(None, normalized.split()))
+            db_normalized_map[normalized].append(db_item)
 
+    # --- Initialize Results ---
     results = {
-        'software_in_database': [],
-        'partial_matches': {},
-        'software_not_in_database': []
+        'full_matches': [],         # List of original 'my_sw' items
+        'partial_matches': {},      # Dict: {orig 'my_sw': [orig 'db_sw' matches]}
+        'not_found': []             # List of original 'my_sw' items
     }
 
-    processed_my_software_normalized = set() # Keep track to avoid duplicates if my list has them
+    processed_my_software_originals = set() # Track original names from my list
 
-    # Pre-calculate token sets for the database for efficiency in partial matching
-    db_token_sets = {}
-    for db_norm, db_orig_list in db_normalized_map.items():
-         db_token_sets[db_norm] = set(db_norm.split()) # Already normalized, just split
-
-
+    # --- Compare Each Item in My List ---
     for my_sw_orig in my_software_list:
+        if my_sw_orig in processed_my_software_originals:
+            continue
+
         my_sw_norm = normalize_name(my_sw_orig)
 
-        if not my_sw_norm or my_sw_norm in processed_my_software_normalized:
-            continue # Skip empty normalized names or duplicates already processed
+        if not my_sw_norm:
+            results['not_found'].append(my_sw_orig)
+            processed_my_software_originals.add(my_sw_orig)
+            continue
 
-        found_match_type = None
+        my_sw_tokens = set(filter(None, my_sw_norm.split()))
+        if not my_sw_tokens:
+            results['not_found'].append(my_sw_orig)
+            processed_my_software_originals.add(my_sw_orig)
+            continue
 
-        # 1. Check for Exact Match (post-FULL-normalization)
-        # This now covers identical unique token sets because normalization handles it.
-        if my_sw_norm in db_normalized_map:
-            found_match_type = 'exact'
-            # Record the original user software name as found
-            results['software_in_database'].append(my_sw_orig)
-            # Optionally, if you want to see *which* DB entries it matched exactly:
-            # matched_db_exact = db_normalized_map[my_sw_norm]
-            # print(f"Exact match for '{my_sw_orig}' ({my_sw_norm}) found with DB entries: {matched_db_exact}")
-            processed_my_software_normalized.add(my_sw_norm)
-            continue # Found exact match, move to next item
+        # --- Check Against Database Entries ---
+        current_match_level = 'none' # none, partial, full
+        partial_match_candidates = [] # Store original DB names for potential partial matches
 
-        # 2. If no exact normalized match, check for Partial Match (Symmetric Difference == 1)
-        partial_found = False
-        possible_partial_matches = []
-        # Get token set for the current user software
-        my_sw_tokens = set(my_sw_norm.split()) # Already normalized, just split
-        my_sw_tokens.discard('') # Should be redundant now, but safe
-
-        if not my_sw_tokens: # Should not happen if my_sw_norm is not empty, but safety check
-             processed_my_software_normalized.add(my_sw_norm)
-             results['software_not_in_database'].append(my_sw_orig)
-             continue
-
-        # Iterate through pre-calculated DB token sets
         for db_norm, db_tokens in db_token_sets.items():
-            # No need to compare against empty set if it somehow occurred
             if not db_tokens:
                 continue
 
             # Calculate symmetric difference
             symmetric_difference = my_sw_tokens.symmetric_difference(db_tokens)
 
-            # --- Partial Match Logic: Exactly 1 token difference ---
-            # We already handled the symm_diff == 0 case via the exact match check above.
-            # Check common tokens only needed if symm_diff could be > 1 and potentially match unrelated items.
-            # If symm_diff == 1, it implies common tokens exist (unless both were single, different tokens).
-            if len(symmetric_difference) == 1:
-                 partial_found = True
-                 # Add the *original* DB names corresponding to this normalized form
-                 possible_partial_matches.extend(db_normalized_map[db_norm])
+            # --- Check for Full Match ---
+            if len(symmetric_difference) <= 1:
+                current_match_level = 'full'
+                # Found the highest priority match for this my_sw, no need to check further
+                break # Exit the inner db_token_sets loop
+
+            # --- Check for Partial Match (only if not already a full match) ---
+            # Note: symmetric_difference > 1 implicitly if we reach here
+
+            is_proper_subset_my_in_db = my_sw_tokens.issubset(db_tokens) and my_sw_tokens != db_tokens
+            is_proper_subset_db_in_my = db_tokens.issubset(my_sw_tokens) and my_sw_tokens != db_tokens
+
+            partial_match_criteria_met = False
+            if is_proper_subset_my_in_db and len(my_sw_tokens) >= 2:
+                 partial_match_criteria_met = True
+            elif is_proper_subset_db_in_my and len(db_tokens) >= 2:
+                 partial_match_criteria_met = True
+
+            if partial_match_criteria_met:
+                 # If we find a partial match, record it and potentially upgrade status
+                 if current_match_level != 'full': # Don't downgrade from full
+                     current_match_level = 'partial'
+                     partial_match_candidates.extend(db_normalized_map[db_norm])
+                 # Continue checking other DB entries in case a Full Match exists
 
 
-        if partial_found:
-            found_match_type = 'partial'
-            # Store original user name mapped to unique list of original DB names
-            results['partial_matches'][my_sw_orig] = sorted(list(set(possible_partial_matches)))
-        else:
-            # 3. If no match of any kind found (neither exact nor partial with diff=1)
-            results['software_not_in_database'].append(my_sw_orig)
+        # --- Categorize Result for my_sw_orig ---
+        if current_match_level == 'full':
+            results['full_matches'].append(my_sw_orig)
+        elif current_match_level == 'partial':
+            # Store unique original DB names that caused partial match
+            results['partial_matches'][my_sw_orig] = sorted(list(set(partial_match_candidates)))
+        else: # current_match_level == 'none'
+            results['not_found'].append(my_sw_orig)
 
-        processed_my_software_normalized.add(my_sw_norm)
+        processed_my_software_originals.add(my_sw_orig)
 
     return results
 
@@ -143,22 +139,21 @@ def write_results(output_file, results):
 
     try:
         with open(output_file, 'w', encoding='utf-8') as f:
-            f.write("=" * 30 + "\n")
+            f.write("=" * 40 + "\n")
             f.write("Software Comparison Results\n")
-            f.write("=" * 30 + "\n\n")
+            f.write("=" * 40 + "\n\n")
 
-            # --- Software Found Directly in Database ---
-            f.write("=== Software Found Directly in Database (Exact Normalized Match) ===\n")
-            f.write("    (Normalization includes lowercasing, punctuation removal, and duplicate word removal)\n")
-            if results['software_in_database']:
-                for item in sorted(results['software_in_database']):
+            f.write("=== Full Matches Found in Database ===\n")
+            f.write("    (Unique token sets differ by 0 or 1 token)\n")
+            if results['full_matches']:
+                for item in sorted(results['full_matches']):
                     f.write(f"- {item}\n")
             else:
                 f.write("None\n")
             f.write("\n")
 
-            # --- Potential Partial Matches Found ---
-            f.write("=== Potential Partial Matches Found (Difference = Exactly 1 Token) ===\n")
+            f.write("=== Partial Matches Found in Database ===\n")
+            f.write("    (One name is proper subset of other & subset size >= 2 tokens; Not a Full Match)\n")
             if results['partial_matches']:
                 for my_sw, db_matches in sorted(results['partial_matches'].items()):
                     f.write(f"- Your Software: {my_sw}\n")
@@ -167,10 +162,10 @@ def write_results(output_file, results):
                 f.write("None\n")
             f.write("\n")
 
-            # --- Software Not Found in Database ---
-            f.write("=== Software NOT Found in Database (Exact or Partial) ===\n")
-            if results['software_not_in_database']:
-                for item in sorted(results['software_not_in_database']):
+            f.write("=== Software NOT Found in Database ===\n")
+            f.write("    (No DB entry met Full or Partial match criteria)\n")
+            if results['not_found']:
+                for item in sorted(results['not_found']):
                     f.write(f"- {item}\n")
             else:
                 f.write("None\n")
@@ -194,7 +189,7 @@ if __name__ == "__main__":
     db_list = read_software_list(db_software_file)
 
     if my_list is not None and db_list is not None:
-        print("Comparing lists using enhanced normalization...")
+        print("Comparing lists using specific Full/Partial match criteria...")
         comparison_results = compare_lists(my_list, db_list)
         write_results(output_result_file, comparison_results)
     else:
