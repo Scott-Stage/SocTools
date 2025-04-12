@@ -1,77 +1,10 @@
-import os
-import re
-import string
-import math # For infinity
-import textwrap # Import for word wrapping
-
-# --- Configuration ---
-DEBUG = False # Set to True to see detailed comparison steps
-JACCARD_PROMOTION_THRESHOLD = 0.5  # Threshold (0.0 to 1.0) for promoting partial to full (<= Threshold)
-JACCARD_NO_MATCH_THRESHOLD = 0.85 # Threshold (0.0 to 1.0) for classifying weak partials as 'Not Found' (>= Threshold)
-
-# --- Manual User Whitelist (Your Software Entries) ---
-MANUAL_USER_WHITELIST = [
-    "Google Chrome",
-    "Specific Internal Tool v3.0",
-]
-MANUAL_USER_WHITELIST_SET = set(MANUAL_USER_WHITELIST)
-
-# --- Manual Blacklist (Your Software Entries) ---
-MANUAL_BLACKLIST = [
-    "Known Problematic Software Entry",
-    "Ignore This Specific Version",
-]
-MANUAL_BLACKLIST_SET = set(MANUAL_BLACKLIST)
-
-# --- Stop Words ---
-STOP_WORDS = [
-    'a', 'an', 'and', 'the', 'of', 'in', 'on', 'at', 'to', 'for', 'with',
-    'server', 'client', 'manager', 'utility', 'agent', 'service',
-    'enterprise', 'professional', 'edition', 'version',
-    'v', 'r', 'x',
-]
-STOP_WORDS_SET = set(STOP_WORDS)
-
-# --- Vendor Whitelist ---
-# If an item *contains* one of these vendors, force Full Match (unless Blacklisted/User Whitelisted first).
-VENDOR_WHITELIST = [
-    "google", "microsoft", "oracle", "adobe", "apple", "cisco", "vmware",
-]
-VENDOR_WHITELIST_SET = set(VENDOR_WHITELIST)
-
-# --- Column Widths for Output Table ---
-WIDTH_MY_SW = 40
-WIDTH_MATCHED_COL = 40
-WIDTH_REASON = 50
-
-# --- Function Definitions (read_software_list, normalize_name, calculate_jaccard_distance - unchanged) ---
-def read_software_list(filepath):
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            software_list = [line.strip() for line in f if line.strip()]
-        return software_list
-    except FileNotFoundError: print(f"Error: File not found at {filepath}"); return None
-    except Exception as e: print(f"Error reading file {filepath}: {e}"); return None
-
-def normalize_name(name):
-    if not name: return ""
-    translator = str.maketrans('', '', string.punctuation)
-    name = name.translate(translator).lower().strip()
-    name = re.sub(r'\s+', ' ', name)
-    tokens = [token for token in name.split() if token not in STOP_WORDS_SET]
-    unique_sorted_tokens = sorted(list(set(filter(None, tokens))))
-    if not unique_sorted_tokens: return ""
-    return ' '.join(unique_sorted_tokens)
-
-def calculate_jaccard_distance(set1, set2):
-    sym_diff = set1.symmetric_difference(set2)
-    union = set1.union(set2)
-    if not union: return 0.0
-    return len(sym_diff) / len(union)
-# --- End unchanged functions ---
-
 def compare_lists(my_software_list, db_software_list):
+    """
+    Compares lists including blacklist, user whitelist, vendor whitelist, stop words, and thresholds.
+    """
     if my_software_list is None or db_software_list is None: return None
+
+    # Prepare Database Data
     db_normalized_map = {}
     db_token_sets = {}
     print("Normalizing database entries (applying stop words)...")
@@ -82,11 +15,11 @@ def compare_lists(my_software_list, db_software_list):
                 db_normalized_map[normalized] = []
                 db_token_sets[normalized] = set(filter(None, normalized.split()))
             db_normalized_map[normalized].append(db_item)
-    # ... (Debug print statements) ...
+    # ... (Debug print statements for DB/Lists/Stopwords) ...
 
     comparison_results = []
     processed_my_software_originals = set()
-    print("\nComparing your software list...")
+    print(f"\nComparing {len(my_software_list)} items from your software list...")
     for i, my_sw_orig in enumerate(my_software_list):
         result_entry = {
             'my_sw_orig': my_sw_orig, 'status': 'Not Found', # Default
@@ -95,43 +28,57 @@ def compare_lists(my_software_list, db_software_list):
             'nearest_candidate_jaccard': 1.1
         }
         if my_sw_orig in processed_my_software_originals: continue
-        if DEBUG: print(f"\n--- Comparing Your Software ({i+1}): '{my_sw_orig}' ---")
+        if DEBUG: print(f"\n--- Comparing Your Software ({i+1}/{len(my_software_list)}): '{my_sw_orig}' ---")
 
         # --- Check Blacklist (Priority 1) ---
         if my_sw_orig in MANUAL_BLACKLIST_SET:
             result_entry['status'] = 'Not Found'; result_entry['reason'] = "Manual Blacklist"
+            if DEBUG: print(f"  Classification: Not Found (Manual Blacklist)")
             comparison_results.append(result_entry); processed_my_software_originals.add(my_sw_orig); continue
 
         # --- Check User Whitelist (Priority 2) ---
         if my_sw_orig in MANUAL_USER_WHITELIST_SET:
             result_entry['status'] = 'Full Match'; result_entry['reason'] = "Manual Whitelist (User)"
+            if DEBUG: print(f"  Classification: Full Match (Manual Whitelist User)")
             comparison_results.append(result_entry); processed_my_software_originals.add(my_sw_orig); continue
 
         # --- Check Vendor Whitelist (Priority 3) ---
-        my_sw_orig_lower = my_sw_orig.lower()
+        my_sw_orig_lower = my_sw_orig.lower() # Use lowercase version for checking
         vendor_found = None
+        if DEBUG: print(f"  Checking for Vendors in: '{my_sw_orig_lower}'") # Added Debug
         for vendor in VENDOR_WHITELIST_SET:
             pattern = r'\b' + re.escape(vendor) + r'\b'
-            if re.search(pattern, my_sw_orig_lower):
-                vendor_found = vendor
-                break # Stop checking vendors once one is found
+            try:
+                 # Using re.IGNORECASE for extra safety, though should not be needed if list/input is lowercase
+                 match = re.search(pattern, my_sw_orig_lower, re.IGNORECASE)
+                 if DEBUG: print(f"    Checking Vendor: '{vendor}', Pattern: '{pattern}', Match: {bool(match)}") # Added Debug
+                 if match:
+                    vendor_found = vendor # Store the actual vendor found
+                    break # Stop checking vendors once one is found
+            except re.error as e:
+                 print(f"Warning: Regex error checking vendor '{vendor}' against '{my_sw_orig_lower}': {e}")
+                 continue
         if vendor_found:
-            if DEBUG: print(f"  Vendor '{vendor_found}' found. Classifying as Full Match.")
             result_entry['status'] = 'Full Match'; result_entry['reason'] = f"Vendor Match ({vendor_found})"
-            comparison_results.append(result_entry); processed_my_software_originals.add(my_sw_orig); continue
+            if DEBUG: print(f"  Classification: Full Match (Vendor Match '{vendor_found}' found)")
+            comparison_results.append(result_entry)
+            processed_my_software_originals.add(my_sw_orig)
+            continue # IMPORTANT: Skip to next item in your list
 
-        # --- Normalize & Compare (Only if not Blacklisted/Whitelisted/Vendor Matched) ---
+        # --- Normalize & Compare (Only if not caught by lists above) ---
+        # ... (Rest of the normalization and comparison logic remains exactly the same as the previous version) ...
         my_sw_norm = normalize_name(my_sw_orig)
         if not my_sw_norm:
-            result_entry['status'] = 'Not Found'; result_entry['reason'] = "Input empty after stop words"
-            comparison_results.append(result_entry); processed_my_software_originals.add(my_sw_orig); continue
+             result_entry['status'] = 'Not Found'; result_entry['reason'] = "Input empty after stop words"
+             if DEBUG: print(f"  Classification: Not Found (Empty Norm)")
+             comparison_results.append(result_entry); processed_my_software_originals.add(my_sw_orig); continue
         my_sw_tokens = set(filter(None, my_sw_norm.split()))
         if not my_sw_tokens:
              result_entry['status'] = 'Not Found'; result_entry['reason'] = "Input has no valid tokens"
+             if DEBUG: print(f"  Classification: Not Found (No Tokens)")
              comparison_results.append(result_entry); processed_my_software_originals.add(my_sw_orig); continue
         if DEBUG: print(f"  Normalized: '{my_sw_norm}' | Tokens: {my_sw_tokens}")
 
-        # Comparison Logic
         found_direct_full_match = False
         potential_partial_details = []
         min_overall_jaccard = 1.1
@@ -147,13 +94,11 @@ def compare_lists(my_software_list, db_software_list):
             if jaccard_dist < min_overall_jaccard:
                  min_overall_jaccard = jaccard_dist; best_overall_candidate_norm = db_norm
 
-            # Check Direct Full Match (Now Priority 4 relative to other checks)
             if sym_diff_len <= 1:
                 result_entry['status'] = 'Full Match'; result_entry['matched_db_orig'] = db_normalized_map[db_norm][0]
                 result_entry['reason'] = f"Symmetric Diff <= 1 (Size={sym_diff_len})"; result_entry['jaccard'] = jaccard_dist
                 found_direct_full_match = True; break
 
-            # Check Potential Partial Criteria
             criterion_A = (sym_diff_len == 2)
             is_proper_subset_my_in_db = my_sw_tokens.issubset(db_tokens) and my_sw_tokens != db_tokens
             is_proper_subset_db_in_my = db_tokens.issubset(my_sw_tokens) and my_sw_tokens != db_tokens
@@ -164,158 +109,66 @@ def compare_lists(my_software_list, db_software_list):
             if criterion_B: partial_reason = "Subset >= 2 tokens"
             if partial_reason: potential_partial_details.append({'jaccard': jaccard_dist, 'db_norm': db_norm, 'reason': partial_reason})
 
-        # --- Final Classification (Only if not matched by earlier rules) ---
-        if not found_direct_full_match: # And wasn't Black/User/Vendor matched earlier
+        # Final Classification (if comparison loop finished)
+        if not found_direct_full_match:
+            comparison_status = 'Not Found'; comparison_reason = None
+            comparison_matched_db = None; comparison_jaccard = None
+            comparison_all_partials = []
+
             if potential_partial_details:
-                best_potential = min(potential_partial_details, key=lambda x: x['jaccard'])
-                min_partial_jaccard = best_potential['jaccard']
-                best_partial_reason = best_potential['reason']
-                best_partial_db_norm = best_potential['db_norm']
-                best_match_orig_db_entries = db_normalized_map[best_partial_db_norm]
-                all_partial_db_origs_reporting = set()
-                for detail in potential_partial_details: all_partial_db_origs_reporting.update(db_normalized_map[detail['db_norm']])
-                result_entry['all_partial_db_matches'] = sorted(list(all_partial_db_origs_reporting))
+                 best_potential = min(potential_partial_details, key=lambda x: x['jaccard'])
+                 min_partial_jaccard = best_potential['jaccard']
+                 best_partial_reason = best_potential['reason']
+                 best_partial_db_norm = best_potential['db_norm']
+                 best_match_orig_db_entries = db_normalized_map[best_partial_db_norm]
+                 all_partial_db_origs_reporting = set()
+                 for detail in potential_partial_details: all_partial_db_origs_reporting.update(db_normalized_map[detail['db_norm']])
+                 comparison_all_partials = sorted(list(all_partial_db_origs_reporting))
 
-                if DEBUG: print(f"  Eval: Potential partials found. Min Jaccard: {min_partial_jaccard:.4f}")
-
-                if min_partial_jaccard >= JACCARD_NO_MATCH_THRESHOLD:
-                    result_entry['status'] = 'Not Found'
-                    result_entry['reason'] = f"Weak Partial (Min Jaccard={min_partial_jaccard:.2f} >= {JACCARD_NO_MATCH_THRESHOLD:.2f})"
-                elif min_partial_jaccard <= JACCARD_PROMOTION_THRESHOLD:
-                    result_entry['status'] = 'Full Match'
-                    result_entry['matched_db_orig'] = best_match_orig_db_entries[0]
-                    result_entry['reason'] = f"Promoted ({best_partial_reason}, Jaccard={min_partial_jaccard:.2f})"
-                    result_entry['jaccard'] = min_partial_jaccard
-                else: # True Partial Match
-                    result_entry['status'] = 'Partial Match'
-                    result_entry['matched_db_orig'] = best_match_orig_db_entries[0]
-                    result_entry['reason'] = f"{best_partial_reason}, Jaccard={min_partial_jaccard:.2f}"
-                    result_entry['jaccard'] = min_partial_jaccard
+                 if min_partial_jaccard >= JACCARD_NO_MATCH_THRESHOLD:
+                      comparison_status = 'Not Found'
+                      comparison_reason = f"Weak Partial (Min Jaccard={min_partial_jaccard:.2f} >= {JACCARD_NO_MATCH_THRESHOLD:.2f})"
+                 elif min_partial_jaccard <= JACCARD_PROMOTION_THRESHOLD:
+                      comparison_status = 'Full Match'
+                      comparison_matched_db = best_match_orig_db_entries[0]
+                      comparison_reason = f"Promoted ({best_partial_reason}, Jaccard={min_partial_jaccard:.2f})"
+                      comparison_jaccard = min_partial_jaccard
+                 else: # True Partial Match
+                      comparison_status = 'Partial Match'
+                      comparison_matched_db = best_match_orig_db_entries[0]
+                      comparison_reason = f"{best_partial_reason}, Jaccard={min_partial_jaccard:.2f}"
+                      comparison_jaccard = min_partial_jaccard
             else: # No direct match, no potential partials
-                result_entry['status'] = 'Not Found'
-                result_entry['reason'] = None # Set reason via nearest candidate logic below
+                 comparison_status = 'Not Found'
+                 comparison_reason = "No match criteria met"
 
-            # Set nearest candidate info if final status is Not Found
-            if result_entry['status'] == 'Not Found':
-                if best_overall_candidate_norm:
-                    result_entry['nearest_candidate_orig'] = db_normalized_map[best_overall_candidate_norm][0]
-                    result_entry['nearest_candidate_jaccard'] = min_overall_jaccard
-                    current_reason = result_entry['reason']
-                    # Append nearest info if reason isn't already set by weak partial
-                    if not current_reason or "Weak Partial" not in current_reason:
-                        reason_suffix = f"Nearest Jaccard={min_overall_jaccard:.2f}"
-                        result_entry['reason'] = reason_suffix
-                    elif current_reason and "Weak Partial" in current_reason:
-                        result_entry['reason'] += f" (Nearest Jaccard={min_overall_jaccard:.2f})"
-                elif result_entry['reason'] is None:
-                     result_entry['reason'] = "No DB entries to compare"
+            # Update result entry with comparison outcome
+            result_entry['status'] = comparison_status
+            result_entry['reason'] = comparison_reason
+            result_entry['matched_db_orig'] = comparison_matched_db
+            result_entry['jaccard'] = comparison_jaccard
+            result_entry['all_partial_db_matches'] = comparison_all_partials
 
+        # Set nearest candidate info if final status is Not Found
+        if result_entry['status'] == 'Not Found':
+             if best_overall_candidate_norm:
+                  result_entry['nearest_candidate_orig'] = db_normalized_map[best_overall_candidate_norm][0]
+                  result_entry['nearest_candidate_jaccard'] = min_overall_jaccard
+                  current_reason = result_entry['reason']
+                  if current_reason not in ["Manual Blacklist", "Input empty after stop words", "Input has no valid tokens"]:
+                       reason_suffix = f"Nearest Jaccard={min_overall_jaccard:.2f}"
+                       if current_reason and "Weak Partial" in current_reason:
+                            result_entry['reason'] = f"{current_reason} ({reason_suffix})"
+                       elif current_reason == "No match criteria met":
+                            result_entry['reason'] = reason_suffix
+                       elif not current_reason:
+                            result_entry['reason'] = reason_suffix
+             elif result_entry['reason'] is None or result_entry['reason'] == "No match criteria met":
+                  result_entry['reason'] = "No DB entries to compare"
+
+        # Append final result for this item
         comparison_results.append(result_entry)
-        processed_my_software_originals.add(my_sw_orig)
+        # processed_my_software_originals.add(my_sw_orig) # Already added at start
 
     print("\nComparison complete.")
     return comparison_results
-
-
-# --- Function write_results_table (unchanged formatting logic, updated headers) ---
-def write_results_table(output_file, comparison_results):
-    if comparison_results is None:
-        print("Skipping writing results due to previous errors."); return
-
-    full_matches = sorted([r for r in comparison_results if r['status'] == 'Full Match'], key=lambda x: x['my_sw_orig'])
-    partial_matches = sorted([r for r in comparison_results if r['status'] == 'Partial Match'], key=lambda x: x['my_sw_orig'])
-    not_found = sorted([r for r in comparison_results if r['status'] == 'Not Found'], key=lambda x: x['my_sw_orig'])
-
-    def get_wrapped_lines(text, width, default="N/A"):
-        if text is None: text = default
-        text_str = str(text)
-        return textwrap.wrap(text_str, width=width, initial_indent="", subsequent_indent="", drop_whitespace=True) or [default]
-
-    try:
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write("Software Comparison Results\n")
-            f.write("=" * (WIDTH_MY_SW + WIDTH_MATCHED_COL + WIDTH_REASON + 6) + "\n\n")
-
-            # Full Matches Table
-            f.write("=== Full Matches ===\n")
-            f.write(f"    (Manual Whitelist(User) OR Vendor Match OR Symm Diff <= 1 OR Promoted Partial [Jaccard <= {JACCARD_PROMOTION_THRESHOLD:.2f}])\n") # Header updated
-            header = f"{'Your Software':<{WIDTH_MY_SW}} | {'Matched DB Entry':<{WIDTH_MATCHED_COL}} | {'Reason':<{WIDTH_REASON}}"
-            f.write(header + "\n"); f.write("-" * len(header) + "\n")
-            if full_matches:
-                for item in full_matches:
-                    my_sw_lines = get_wrapped_lines(item['my_sw_orig'], WIDTH_MY_SW)
-                    matched_db_lines = get_wrapped_lines(item['matched_db_orig'], WIDTH_MATCHED_COL, default="")
-                    reason_lines = get_wrapped_lines(item['reason'], WIDTH_REASON)
-                    max_lines = max(len(my_sw_lines), len(matched_db_lines), len(reason_lines))
-                    for i in range(max_lines):
-                        my_sw_part = my_sw_lines[i] if i < len(my_sw_lines) else ""
-                        matched_part = matched_db_lines[i] if i < len(matched_db_lines) else ""
-                        reason_part = reason_lines[i] if i < len(reason_lines) else ""
-                        f.write(f"{my_sw_part:<{WIDTH_MY_SW}} | {matched_part:<{WIDTH_MATCHED_COL}} | {reason_part:<{WIDTH_REASON}}\n")
-            else: f.write("None\n")
-            f.write("\n")
-
-            # Partial Matches Table
-            f.write("=== Partial Matches ===\n")
-            f.write(f"    (Potential Partial AND {JACCARD_PROMOTION_THRESHOLD:.2f} < Jaccard < {JACCARD_NO_MATCH_THRESHOLD:.2f} AND No Blacklist/Whitelist/Vendor)\n") # Header updated
-            header = f"{'Your Software':<{WIDTH_MY_SW}} | {'Potential DB Matches':<{WIDTH_MATCHED_COL}} | {'Best Match Reason':<{WIDTH_REASON}}"
-            f.write(header + "\n"); f.write("-" * len(header) + "\n")
-            if partial_matches:
-                for item in partial_matches:
-                    my_sw_lines = get_wrapped_lines(item['my_sw_orig'], WIDTH_MY_SW)
-                    matches_str = (', '.join(item['all_partial_db_matches']) if item['all_partial_db_matches'] else "N/A")
-                    matches_lines = get_wrapped_lines(matches_str, WIDTH_MATCHED_COL)
-                    reason_lines = get_wrapped_lines(item['reason'], WIDTH_REASON)
-                    max_lines = max(len(my_sw_lines), len(matches_lines), len(reason_lines))
-                    for i in range(max_lines):
-                        my_sw_part = my_sw_lines[i] if i < len(my_sw_lines) else ""
-                        matches_part = matches_lines[i] if i < len(matches_lines) else ""
-                        reason_part = reason_lines[i] if i < len(reason_lines) else ""
-                        f.write(f"{my_sw_part:<{WIDTH_MY_SW}} | {matches_part:<{WIDTH_MATCHED_COL}} | {reason_part:<{WIDTH_REASON}}\n")
-            else: f.write("None\n")
-            f.write("\n")
-
-            # No Matches Table
-            f.write("=== No Matches Found ===\n")
-            f.write(f"    (Manual Blacklist OR Not Full/Partial OR Weak Partial [Jaccard >= {JACCARD_NO_MATCH_THRESHOLD:.2f}])\n")
-            header = f"{'Your Software':<{WIDTH_MY_SW}} | {'Nearest DB Candidate':<{WIDTH_MATCHED_COL}} | {'Reason / Nearest':<{WIDTH_REASON}}"
-            f.write(header + "\n"); f.write("-" * len(header) + "\n")
-            if not_found:
-                for item in not_found:
-                    my_sw_lines = get_wrapped_lines(item['my_sw_orig'], WIDTH_MY_SW)
-                    nearest_lines = get_wrapped_lines(item['nearest_candidate_orig'], WIDTH_MATCHED_COL, default="None")
-                    reason_str = str(item.get('reason', "N/A"))
-                    reason_lines = get_wrapped_lines(reason_str, WIDTH_REASON)
-                    max_lines = max(len(my_sw_lines), len(nearest_lines), len(reason_lines))
-                    for i in range(max_lines):
-                        my_sw_part = my_sw_lines[i] if i < len(my_sw_lines) else ""
-                        nearest_part = nearest_lines[i] if i < len(nearest_lines) else ""
-                        reason_part = reason_lines[i] if i < len(reason_lines) else ""
-                        f.write(f"{my_sw_part:<{WIDTH_MY_SW}} | {nearest_part:<{WIDTH_MATCHED_COL}} | {reason_part:<{WIDTH_REASON}}\n")
-            else: f.write("None\n")
-            f.write("\n")
-
-        print(f"\nResults successfully written to {output_file}")
-    except Exception as e:
-        print(f"Error writing results table to file {output_file}: {e}")
-# --- End write_results_table ---
-
-
-# --- Main Execution (unchanged) ---
-if __name__ == "__main__":
-    my_software_file = "my_software.txt"
-    db_software_file = "database_software.txt"
-    output_result_file = "comparison_results_table.txt"
-
-    print(f"Reading your software list from: {my_software_file}")
-    my_list = read_software_list(my_software_file)
-
-    print(f"Reading database software list from: {db_software_file}")
-    db_list = read_software_list(db_software_file)
-
-    if my_list is not None and db_list is not None:
-        print(f"Comparing lists (Jaccard Promo Thresh: {JACCARD_PROMOTION_THRESHOLD}, No Match Thresh: {JACCARD_NO_MATCH_THRESHOLD})...")
-        detailed_results = compare_lists(my_list, db_list)
-        write_results_table(output_result_file, detailed_results)
-    else:
-        print("Comparison cancelled due to errors reading input files.")
