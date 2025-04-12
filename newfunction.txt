@@ -1,89 +1,155 @@
-function ConvertTo-JsonFromXmlSTJ($XMLData)
-{
-    $xmldoc = [System.Xml.XmlDocument]::new()
-    $xmldoc.LoadXml((Remove-UnknownCharactersFromXML -String $XMLData))
+import os
+import re
 
-    # Convert XML to a Hashtable (or PSCustomObject for more complex scenarios)
-    $jsonObject = ConvertFrom-XmlToHashtable -XmlNode $xmldoc
+def read_software_list(filepath):
+    """Reads a software list from a file, one item per line."""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            # Read lines, strip whitespace, filter out empty lines
+            software_list = [line.strip() for line in f if line.strip()]
+        return software_list
+    except FileNotFoundError:
+        print(f"Error: File not found at {filepath}")
+        return None
+    except Exception as e:
+        print(f"Error reading file {filepath}: {e}")
+        return None
 
-    # Serialize the Hashtable to JSON using System.Text.Json
-    $jsonString = [System.Text.Json.JsonSerializer]::Serialize($jsonObject, [System.Text.Json.JsonSerializerOptions]::new() {WriteIndented = $true})
+def normalize_name(name):
+    """Normalizes software name for comparison (lowercase, strip)."""
+    if not name:
+        return ""
+    return name.lower().strip()
 
-    # Remove the "@" character from attributes (similar to the original function)
-    return ([Regex]::Replace($jsonString, '"@', '"', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase))
+def compare_lists(my_software_list, db_software_list):
+    """
+    Compares the user's software list against the database list.
 
-}
+    Returns a dictionary containing categorized results.
+    """
+    if my_software_list is None or db_software_list is None:
+        return None # Indicate error during file reading
 
-function ConvertFrom-XmlToHashtable {
-    param(
-        [Parameter(Mandatory=$true)]
-        [System.Xml.XmlNode]$XmlNode
-    )
+    # Normalize database list for efficient lookup
+    # Store mapping from normalized name back to original(s)
+    db_normalized_map = {}
+    for db_item in db_software_list:
+        normalized = normalize_name(db_item)
+        if normalized:
+            if normalized not in db_normalized_map:
+                db_normalized_map[normalized] = []
+            db_normalized_map[normalized].append(db_item) # Store original name
 
-    if ($XmlNode.HasChildNodes -and ($XmlNode.ChildNodes.Count -gt 1 -or ($XmlNode.ChildNodes[0].NodeType -ne "Text" -and $XmlNode.ChildNodes[0].NodeType -ne "CDATA"))) {
-        $jsonObject = @{}
-
-        # Process Attributes
-        if ($XmlNode.Attributes) {
-            foreach ($attribute in $XmlNode.Attributes) {
-                $jsonObject."@$($attribute.Name)" = $attribute.Value
-            }
-        }
-
-        # Process Child Nodes
-        foreach ($childNode in $XmlNode.ChildNodes) {
-            if ($childNode.NodeType -eq "Element") {
-                $childName = $childNode.Name
-                $childValue = ConvertFrom-XmlToHashtable -XmlNode $childNode
-
-                if ($jsonObject.ContainsKey($childName)) {
-                    # Handle multiple elements with the same name as an array
-                    if ($jsonObject.$childName -isnot [System.Array]) {
-                        $jsonObject.$childName = @($jsonObject.$childName)
-                    }
-                    $jsonObject.$childName += $childValue
-                } else {
-                    $jsonObject.$childName = $childValue
-                }
-            } elseif ($childNode.NodeType -eq "Text" -or $childNode.NodeType -eq "CDATA") {
-                # If it's just text content and the parent has no attributes and only one text child, return just the text.
-                if (!$XmlNode.Attributes -and $XmlNode.ChildNodes.Count -eq 1) {
-                    return $childNode.InnerText.Trim()
-                } else { # Otherwise, treat it as #text node (similar to Newtonsoft in some scenarios, though STJ is more flexible)
-                    if ($jsonObject.ContainsKey("#text")) {
-                        if ($jsonObject."#text" -isnot [System.Array]) {
-                            $jsonObject."#text" = @($jsonObject."#text")
-                        }
-                        $jsonObject."#text" += $childNode.InnerText.Trim()
-                    } else {
-                        $jsonObject."#text" = $childNode.InnerText.Trim()
-                    }
-                }
-            }
-        }
-        return $jsonObject
-    } elseif ($XmlNode.NodeType -eq "Element" -and !$XmlNode.HasChildNodes -and $XmlNode.Attributes) {
-        # Element with only attributes and no child nodes
-        $jsonObject = @{}
-        foreach ($attribute in $XmlNode.Attributes) {
-            $jsonObject."@$($attribute.Name)" = $attribute.Value
-        }
-        return $jsonObject
-
+    # Prepare results containers
+    results = {
+        'software_in_database': [],
+        'partial_matches': {}, # {my_sw_orig: [db_sw_orig1, db_sw_orig2,...]}
+        'software_not_in_database': []
+        # 'unknown' category is not explicitly generated by this logic,
+        # as every item is classified into one of the other three.
     }
-    else {
-        # Text node or empty element
-        return $XmlNode.InnerText.Trim()
-    }
-}
 
+    processed_my_software_normalized = set() # Keep track to avoid duplicates if my list has them
 
-# Example Usage (assuming you have Remove-UnknownCharactersFromXML defined or can remove the call for testing):
-# Function to remove unknown characters (you might have your own implementation, this is a basic example)
-function Remove-UnknownCharactersFromXML {
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$String
-    )
-    return $String # In a real scenario, you'd implement character removal logic here.
-}
+    # Iterate through the user's software list
+    for my_sw_orig in my_software_list:
+        my_sw_norm = normalize_name(my_sw_orig)
+
+        if not my_sw_norm or my_sw_norm in processed_my_software_normalized:
+            continue # Skip empty names or duplicates already processed
+
+        found_match_type = None # 'exact' or 'partial'
+        matching_db_entries = []
+
+        # 1. Check for Exact Match (case-insensitive)
+        if my_sw_norm in db_normalized_map:
+            found_match_type = 'exact'
+            # No need to store matching entries for exact, just the user's software name
+            results['software_in_database'].append(my_sw_orig)
+
+        # 2. If no exact match, check for Partial Match (substring)
+        if not found_match_type:
+            partial_found = False
+            possible_partial_matches = []
+            for db_norm, db_orig_list in db_normalized_map.items():
+                # Check if my_sw is substring of db_sw OR db_sw is substring of my_sw
+                if my_sw_norm in db_norm or db_norm in my_sw_norm:
+                    partial_found = True
+                    possible_partial_matches.extend(db_orig_list) # Add original DB names
+
+            if partial_found:
+                found_match_type = 'partial'
+                # Use set to ensure unique DB entries for this partial match
+                results['partial_matches'][my_sw_orig] = sorted(list(set(possible_partial_matches)))
+
+        # 3. If no match of any kind found
+        if not found_match_type:
+            results['software_not_in_database'].append(my_sw_orig)
+
+        processed_my_software_normalized.add(my_sw_norm) # Mark as processed
+
+    return results
+
+def write_results(output_file, results):
+    """Writes the categorized results to a file."""
+    if results is None:
+        print("Skipping writing results due to previous errors.")
+        return
+
+    try:
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write("=" * 30 + "\n")
+            f.write("Software Comparison Results\n")
+            f.write("=" * 30 + "\n\n")
+
+            # --- Software Found Directly in Database ---
+            f.write("=== Software Found Directly in Database ===\n")
+            if results['software_in_database']:
+                for item in sorted(results['software_in_database']):
+                    f.write(f"- {item}\n")
+            else:
+                f.write("None\n")
+            f.write("\n")
+
+            # --- Potential Partial Matches Found ---
+            f.write("=== Potential Partial Matches Found ===\n")
+            if results['partial_matches']:
+                for my_sw, db_matches in sorted(results['partial_matches'].items()):
+                    f.write(f"- Your Software: {my_sw}\n")
+                    f.write(f"  Potential DB Matches: {', '.join(db_matches)}\n")
+            else:
+                f.write("None\n")
+            f.write("\n")
+
+            # --- Software Not Found in Database ---
+            f.write("=== Software NOT Found in Database (Exact or Partial) ===\n")
+            if results['software_not_in_database']:
+                for item in sorted(results['software_not_in_database']):
+                    f.write(f"- {item}\n")
+            else:
+                f.write("None\n")
+            f.write("\n")
+
+        print(f"Results successfully written to {output_file}")
+
+    except Exception as e:
+        print(f"Error writing results to file {output_file}: {e}")
+
+# --- Main Execution ---
+if __name__ == "__main__":
+    my_software_file = "my_software.txt"
+    db_software_file = "database_software.txt"
+    output_result_file = "comparison_results.txt"
+
+    print(f"Reading your software list from: {my_software_file}")
+    my_list = read_software_list(my_software_file)
+
+    print(f"Reading database software list from: {db_software_file}")
+    db_list = read_software_list(db_software_file)
+
+    if my_list is not None and db_list is not None:
+        print("Comparing lists...")
+        comparison_results = compare_lists(my_list, db_list)
+        write_results(output_result_file, comparison_results)
+    else:
+        print("Comparison cancelled due to errors reading input files.")
