@@ -39,19 +39,15 @@ def calculate_jaccard_distance(set1, set2):
     """ Calculates Jaccard distance: len(symm_diff) / len(union) """
     sym_diff = set1.symmetric_difference(set2)
     union = set1.union(set2)
-    if not union: # Avoid division by zero if both sets are empty
-        return 0.0
+    if not union: return 0.0
     return len(sym_diff) / len(union)
 
 
 def compare_lists(my_software_list, db_software_list):
     """
-    Compares lists with Full/Partial match criteria and % difference for partials.
-    - Full Match: Symmetric Difference <= 1 token.
-    - Partial Match: Proper subset (size >= 2) AND Not Full Match.
-
-    Returns dict with 'full_matches', 'partial_matches', 'not_found'.
-    Partial matches include min Jaccard distance percentage.
+    Compares lists with refined Full/Partial match criteria.
+    - Full Match: (Symm Diff <= 1) OR (Partial Criteria Met AND Jaccard Dist <= 0.5).
+    - Partial Match: Partial Criteria Met AND Jaccard Dist > 0.5.
     """
     if my_software_list is None or db_software_list is None:
         return None
@@ -103,9 +99,10 @@ def compare_lists(my_software_list, db_software_list):
         if DEBUG: print(f"  Normalized: '{my_sw_norm}' | Tokens: {my_sw_tokens}")
 
         # --- Check Against Database Entries ---
-        current_match_level = 'none'
+        current_match_level = 'none' # none, partial, full
         partial_match_candidates = []
-        min_partial_jaccard_dist = 1.1 # Initialize higher than max possible distance (1.0)
+        min_partial_jaccard_dist = 1.1 # Initialize > 1.0
+        found_direct_full_match = False # Flag if symm diff <= 1 was met
         db_check_counter = 0
 
         for db_norm, db_tokens in db_token_sets.items():
@@ -120,13 +117,14 @@ def compare_lists(my_software_list, db_software_list):
 
             if DEBUG: print(f"    Symm Diff: {symmetric_difference} (Size: {sym_diff_len}) | Jaccard Dist: {jaccard_dist:.4f}")
 
-            # --- Check for Full Match ---
+            # --- Check for Direct Full Match (Symm Diff <= 1 takes precedence) ---
             if sym_diff_len <= 1:
-                if DEBUG: print(f"    --> Full Match found (Symm Diff <= 1).")
+                if DEBUG: print(f"    --> Direct Full Match found (Symm Diff <= 1).")
                 current_match_level = 'full'
-                break # Exit inner loop
+                found_direct_full_match = True
+                break # Exit inner loop, highest priority match found
 
-            # --- Check for Partial Match (only if not already a full match) ---
+            # --- Check for Partial Match Criteria (only if direct full match not found yet) ---
             is_proper_subset_my_in_db = my_sw_tokens.issubset(db_tokens) and my_sw_tokens != db_tokens
             is_proper_subset_db_in_my = db_tokens.issubset(my_sw_tokens) and my_sw_tokens != db_tokens
 
@@ -139,29 +137,32 @@ def compare_lists(my_software_list, db_software_list):
                  partial_match_criteria_met = True
 
             if partial_match_criteria_met:
-                 if current_match_level != 'full':
-                     current_match_level = 'partial'
-                     partial_match_candidates.extend(db_normalized_map[db_norm])
-                     # Track the minimum distance found among partial matches
-                     min_partial_jaccard_dist = min(min_partial_jaccard_dist, jaccard_dist)
-                     if DEBUG: print(f"    --> Marking as potential Partial Match. Min Dist so far: {min_partial_jaccard_dist:.4f}. Candidates: {set(partial_match_candidates)}")
-                 else:
-                      if DEBUG: print(f"    --> Partial criteria met, but already found Full match earlier. Ignoring.")
-            elif DEBUG and current_match_level != 'full':
+                 # This comparison meets the partial criteria. Record its details.
+                 current_match_level = 'partial' # Mark that we found at least one partial
+                 partial_match_candidates.extend(db_normalized_map[db_norm])
+                 min_partial_jaccard_dist = min(min_partial_jaccard_dist, jaccard_dist)
+                 if DEBUG: print(f"    --> Recording potential Partial Match. Min Dist so far: {min_partial_jaccard_dist:.4f}. Candidates: {set(partial_match_candidates)}")
+            elif DEBUG:
                  print(f"    --> No Full or Partial match criteria met with this DB entry.")
 
-        # --- Categorize Result for my_sw_orig ---
-        if current_match_level == 'full':
+            # NOTE: Inner loop continues even if partial found, to check all DB entries for a potential direct full match.
+
+        # --- Categorize Result for my_sw_orig (After checking all DB entries) ---
+        if found_direct_full_match: # Highest priority
             results['full_matches'].append(my_sw_orig)
-            if DEBUG: print(f"  FINAL Classification for '{my_sw_orig}': Full Match")
+            if DEBUG: print(f"  FINAL Classification for '{my_sw_orig}': Full Match (Direct Symm Diff <= 1)")
         elif current_match_level == 'partial':
-            # Store results including the minimum percentage difference
-            min_diff_percent = round(min_partial_jaccard_dist * 100, 2)
-            results['partial_matches'][my_sw_orig] = {
-                'db_matches': sorted(list(set(partial_match_candidates))),
-                'min_diff_percent': min_diff_percent
-            }
-            if DEBUG: print(f"  FINAL Classification for '{my_sw_orig}': Partial Match (Min Diff: {min_diff_percent}%, DB Originals: {results['partial_matches'][my_sw_orig]['db_matches']})")
+            # We found partial matches, but no direct full match. Now check Jaccard distance.
+            if min_partial_jaccard_dist <= 0.5: # Reclassify as Full Match based on threshold
+                results['full_matches'].append(my_sw_orig)
+                if DEBUG: print(f"  FINAL Classification for '{my_sw_orig}': Full Match (Promoted from Partial, Min Jaccard Dist <= 50%)")
+            else: # Keep as Partial Match
+                min_diff_percent = round(min_partial_jaccard_dist * 100, 2)
+                results['partial_matches'][my_sw_orig] = {
+                    'db_matches': sorted(list(set(partial_match_candidates))),
+                    'min_diff_percent': min_diff_percent
+                }
+                if DEBUG: print(f"  FINAL Classification for '{my_sw_orig}': Partial Match (Min Diff: {min_diff_percent}%, Jaccard > 50%)")
         else: # current_match_level == 'none'
             results['not_found'].append(my_sw_orig)
             if DEBUG: print(f"  FINAL Classification for '{my_sw_orig}': Not Found")
@@ -184,7 +185,8 @@ def write_results(output_file, results):
             f.write("=" * 40 + "\n\n")
 
             f.write("=== Full Matches Found in Database ===\n")
-            f.write("    (Unique token sets differ by 0 or 1 token)\n")
+            f.write("    (Criteria: Unique token sets differ by <=1 token OR \n")
+            f.write("     Partial Match criteria met with Min Jaccard Distance <= 50%)\n")
             if results['full_matches']:
                 for item in sorted(results['full_matches']):
                     f.write(f"- {item}\n")
@@ -193,14 +195,14 @@ def write_results(output_file, results):
             f.write("\n")
 
             f.write("=== Partial Matches Found in Database ===\n")
-            f.write("    (One name is proper subset of other & subset size >= 2 tokens; Not a Full Match)\n")
+            f.write("    (Criteria: One name proper subset (size>=2) of other; Not a Full Match;\n")
+            f.write("     AND Min Jaccard Distance > 50%)\n")
             if results['partial_matches']:
-                # Sort by the original 'my_sw' name
                 for my_sw, match_data in sorted(results['partial_matches'].items()):
                     db_matches = match_data['db_matches']
                     percent_diff = match_data['min_diff_percent']
                     f.write(f"- Your Software: {my_sw}\n")
-                    f.write(f"  (Min Difference: {percent_diff:.2f}%) Potential DB Matches: {', '.join(db_matches)}\n") # Display percentage
+                    f.write(f"  (Min Difference: {percent_diff:.2f}%) Potential DB Matches: {', '.join(db_matches)}\n")
             else:
                 f.write("None\n")
             f.write("\n")
@@ -232,7 +234,7 @@ if __name__ == "__main__":
     db_list = read_software_list(db_software_file)
 
     if my_list is not None and db_list is not None:
-        print("Comparing lists using specific Full/Partial match criteria...")
+        print("Comparing lists using specific Full/Partial match criteria with Jaccard threshold...")
         comparison_results = compare_lists(my_list, db_list)
         write_results(output_result_file, comparison_results)
     else:
