@@ -22,19 +22,18 @@ def normalize_name(name):
     if not name:
         return ""
     # Remove punctuation (keeps letters, numbers, whitespace)
-    # Creates a translation table that maps each punctuation char to None
     translator = str.maketrans('', '', string.punctuation)
     name = name.translate(translator)
     # Lowercase and strip leading/trailing whitespace
     name = name.lower().strip()
-    # Optional: Reduce multiple spaces to single spaces
+    # Reduce multiple spaces to single spaces
     name = re.sub(r'\s+', ' ', name)
     return name
 
 def compare_lists(my_software_list, db_software_list):
     """
     Compares the user's software list against the database list using
-    refined partial matching based on word tokens.
+    partial matching allowing for a difference of at most one token.
 
     Returns a dictionary containing categorized results.
     """
@@ -64,7 +63,7 @@ def compare_lists(my_software_list, db_software_list):
             continue
 
         found_match_type = None
-        matching_db_entries = []
+        # matching_db_entries = [] # Not needed directly here anymore
 
         # 1. Check for Exact Match (post-normalization)
         if my_sw_norm in db_normalized_map:
@@ -73,18 +72,17 @@ def compare_lists(my_software_list, db_software_list):
             processed_my_software_normalized.add(my_sw_norm)
             continue # Move to the next item in my list
 
-        # 2. If no exact match, check for Refined Partial Match (token-based)
+        # 2. If no exact match, check for "All But One Token" Partial Match
         partial_found = False
         possible_partial_matches = []
-        my_sw_tokens = set(my_sw_norm.split()) # Split into words and make a set
-
-        # Ensure we don't match on empty tokens if they somehow occur
-        my_sw_tokens.discard('')
+        my_sw_tokens = set(my_sw_norm.split())
+        my_sw_tokens.discard('') # Ensure no empty tokens
 
         if not my_sw_tokens: # Skip if normalization resulted in empty tokens
              processed_my_software_normalized.add(my_sw_norm)
-             continue # Treat as not found if it normalizes to nothing meaningful
-
+             # Decide how to classify: Treat as 'not found' if it has no meaningful tokens
+             results['software_not_in_database'].append(my_sw_orig)
+             continue
 
         for db_norm, db_orig_list in db_normalized_map.items():
             db_tokens = set(db_norm.split())
@@ -93,26 +91,23 @@ def compare_lists(my_software_list, db_software_list):
             if not db_tokens:
                 continue # Skip empty db entries
 
-            # --- Refined Partial Match Logic ---
-            # Check if all words from one name are present in the other
-            # This is stricter than substring and avoids trivial matches like " v "
-            is_subset_match = my_sw_tokens.issubset(db_tokens) or db_tokens.issubset(my_sw_tokens)
+            # --- "All But One Token" Match Logic ---
+            # Calculate tokens unique to 'my' software and unique to 'db' software
+            my_unique_tokens = my_sw_tokens - db_tokens
+            db_unique_tokens = db_tokens - my_sw_tokens
 
-            # --- Optional: Add simple substring check as fallback? ---
-            # If you find the token check *too* strict, you could uncomment this.
-            # Be aware it might bring back some of the " v " matches.
-            # is_substring_match = my_sw_norm in db_norm or db_norm in my_sw_norm
-            #
-            # if is_subset_match or is_substring_match:
-            # --- End Optional Fallback ---
+            # Calculate common tokens to ensure there's *some* overlap
+            common_tokens = my_sw_tokens.intersection(db_tokens)
 
-            if is_subset_match:
-                 # Ensure the match isn't just based on common short words if desired
-                 # (e.g. ignore if the intersection is only {'v', 'r'})
-                 # For now, we accept any non-empty subset match
-                 if my_sw_tokens and db_tokens: # Make sure sets are not empty
-                     partial_found = True
-                     possible_partial_matches.extend(db_orig_list)
+            # Condition:
+            # 1. There must be at least one common token (prevents matching completely unrelated names)
+            # 2. EITHER the number of tokens only in 'my' set is 0 or 1
+            # 3. OR the number of tokens only in 'db' set is 0 or 1
+            # This allows for one side to be a subset (len unique = 0) or differ by just one token.
+            if len(common_tokens) > 0 and \
+               (len(my_unique_tokens) <= 1 or len(db_unique_tokens) <= 1):
+                partial_found = True
+                possible_partial_matches.extend(db_orig_list)
 
 
         if partial_found:
@@ -140,7 +135,7 @@ def write_results(output_file, results):
             f.write("=" * 30 + "\n\n")
 
             # --- Software Found Directly in Database ---
-            f.write("=== Software Found Directly in Database ===\n")
+            f.write("=== Software Found Directly in Database (Exact Normalized Match) ===\n")
             if results['software_in_database']:
                 for item in sorted(results['software_in_database']):
                     f.write(f"- {item}\n")
@@ -149,7 +144,7 @@ def write_results(output_file, results):
             f.write("\n")
 
             # --- Potential Partial Matches Found ---
-            f.write("=== Potential Partial Matches Found (Token-Based) ===\n")
+            f.write("=== Potential Partial Matches Found (Difference <= 1 Token) ===\n")
             if results['partial_matches']:
                 for my_sw, db_matches in sorted(results['partial_matches'].items()):
                     f.write(f"- Your Software: {my_sw}\n")
@@ -185,7 +180,7 @@ if __name__ == "__main__":
     db_list = read_software_list(db_software_file)
 
     if my_list is not None and db_list is not None:
-        print("Comparing lists using refined partial matching...")
+        print("Comparing lists using 'all but one token' partial matching...")
         comparison_results = compare_lists(my_list, db_list)
         write_results(output_result_file, comparison_results)
     else:
