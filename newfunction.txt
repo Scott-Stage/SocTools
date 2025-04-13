@@ -9,12 +9,43 @@ function parseUrlsAndDisplayTable(html) {
   // 3. Prepare data array to store link information
   const linkData = [];
 
-  // 4. Iterate through each link and extract text and URL
+  // 4. Iterate through each link and extract text and URL, then process URL
   links.forEach(link => {
     const linkText = link.textContent.trim(); // Get link text and trim whitespace
-    const url = link.getAttribute('href');    // Get the href attribute (URL)
+    let url = link.getAttribute('href');    // Get the href attribute (URL)
 
     if (url) { // Ensure there's a URL (href attribute exists)
+      // Check if it's a Safe Links URL
+      if (url.startsWith('https://gcc02.safelinks.protection.outlook.com/') ||
+          url.startsWith('https://na01.safelinks.protection.outlook.com/') ||
+          url.startsWith('https://emea01.safelinks.protection.outlook.com/') ||
+          url.startsWith('https://ap01.safelinks.protection.outlook.com/') || // Add more variations if needed
+          url.startsWith('https://safelinks.protection.outlook.com/')) { // Generic safelinks domain
+
+        try {
+          // Extract the 'url' parameter and URL-decode it
+          const urlParams = new URLSearchParams(new URL(url).search);
+          const decodedURL = urlParams.get('url');
+
+          if (decodedURL) {
+            url = decodeURIComponent(decodedURL); // Decode the URL-encoded original URL
+          }
+        } catch (error) {
+          console.error("Error processing Safe Links URL:", error, url);
+          // If there's an error parsing the Safe Links URL, fallback to using the original URL
+          // or handle it as needed for your application.
+          // For now, we'll use the original URL as fallback if parsing fails.
+        }
+      } else {
+        try {
+          url = decodeURIComponent(url); // Decode regular URL encoding if it's not a Safe Links URL
+        } catch (error) {
+          console.error("Error decoding URL:", error, url);
+          // Handle decoding errors for regular URLs if needed.
+        }
+      }
+
+
       linkData.push({
         text: linkText || 'No Text', // Use 'No Text' if link text is empty
         url: url
@@ -82,109 +113,3 @@ function parseUrlsAndDisplayTable(html) {
 
   return table; // Return the generated table element
 }
-
-// Helper function to copy text to clipboard
-function copyToClipboard(text, button) {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(text)
-      .then(() => {
-        button.textContent = 'Copied!';
-        setTimeout(() => {
-          button.textContent = 'Copy'; // Reset button text after a short delay
-        }, 1500); // Reset after 1.5 seconds
-      })
-      .catch(err => {
-        console.error('Failed to copy text: ', err);
-        alert('Failed to copy URL to clipboard. Please copy manually.');
-      });
-  } else {
-    // Fallback for browsers that don't support Clipboard API (older browsers)
-    fallbackCopyToClipboard(text, button);
-  }
-}
-
-// Fallback copy to clipboard for older browsers
-function fallbackCopyToClipboard(text, button) {
-  const textArea = document.createElement("textarea");
-  textArea.value = text;
-
-  // Avoid scrolling to bottom
-  textArea.style.top = "0";
-  textArea.style.left = "0";
-  textArea.style.position = "fixed";
-
-  document.body.appendChild(textArea);
-  textArea.focus();
-  textArea.select();
-
-  try {
-    const successful = document.execCommand('copy');
-    if (successful) {
-      button.textContent = 'Copied!';
-      setTimeout(() => {
-        button.textContent = 'Copy';
-      }, 1500);
-    } else {
-      alert('Failed to copy URL to clipboard. Please copy manually (Ctrl+C / Cmd+C).');
-    }
-  } catch (err) {
-    console.error('Fallback copy failed: ', err);
-    alert('Failed to copy URL to clipboard. Please copy manually.');
-  }
-
-  document.body.removeChild(textArea);
-}
-
-
-// --- Example Usage (You would run this part in your script after the function definition) ---
-const htmlContent = `
-  <p>Check out these links:</p>
-  <a href="https://www.example.com">Example Website</a>
-  <a href="https://www.google.com">Google</a>
-  <a href="mailto:test@example.com">Email Us</a>
-  <a href="tel:+15551234567">Call Us</a>
-  <a href="https://www.example.com/page with spaces">Link with Spaces</a>
-  <a href="">Empty URL Link</a>
-  <a>Link without href</a>
-  <a href="https://www.another-example.org">Another Example</a>
-  <a href="https://subdomain.example.com/path/to/resource">Subdomain Link</a>
-`;
-
-// Call the function to parse HTML and create the table
-const urlTable = parseUrlsAndDisplayTable(htmlContent);
-
-// Get the element where you want to display the table (e.g., a div with id="urlTableContainer")
-const container = document.getElementById('urlTableContainer'); // Make sure you have this element in your HTML
-
-if (container) {
-  container.appendChild(urlTable); // Append the table to the container
-} else {
-  console.error("Container element with id 'urlTableContainer' not found in the HTML.");
-  // You can append it to the body directly for testing if needed:
-  // document.body.appendChild(urlTable);
-}
-
-
-/* ---  Basic CSS for the table (Optional - Add to your CSS file or <style> tag) --- */
-/*
-.url-table {
-  border-collapse: collapse;
-  width: 100%;
-  margin-top: 20px;
-}
-
-.url-table th, .url-table td {
-  border: 1px solid #ddd;
-  padding: 8px;
-  text-align: left;
-}
-
-.url-table th {
-  background-color: #f2f2f2;
-}
-
-.url-table td button {
-  padding: 5px 10px;
-  cursor: pointer;
-}
-*/
