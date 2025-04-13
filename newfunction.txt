@@ -1,174 +1,190 @@
-def compare_lists(my_software_list, db_software_list):
-    """
-    Compares lists including blacklist, user whitelist, vendor whitelist, stop words, and thresholds.
-    """
-    if my_software_list is None or db_software_list is None: return None
+function parseUrlsAndDisplayTable(html) {
+  // 1. Parse the HTML string into a DOM tree
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
 
-    # Prepare Database Data
-    db_normalized_map = {}
-    db_token_sets = {}
-    print("Normalizing database entries (applying stop words)...")
-    for db_item in db_software_list:
-        normalized = normalize_name(db_item)
-        if normalized:
-            if normalized not in db_normalized_map:
-                db_normalized_map[normalized] = []
-                db_token_sets[normalized] = set(filter(None, normalized.split()))
-            db_normalized_map[normalized].append(db_item)
-    # ... (Debug print statements for DB/Lists/Stopwords) ...
+  // 2. Find all anchor elements (<a> tags)
+  const links = doc.querySelectorAll('a');
 
-    comparison_results = []
-    processed_my_software_originals = set()
-    print(f"\nComparing {len(my_software_list)} items from your software list...")
-    for i, my_sw_orig in enumerate(my_software_list):
-        result_entry = {
-            'my_sw_orig': my_sw_orig, 'status': 'Not Found', # Default
-            'matched_db_orig': None, 'reason': None, 'jaccard': None,
-            'all_partial_db_matches': [], 'nearest_candidate_orig': None,
-            'nearest_candidate_jaccard': 1.1
-        }
-        if my_sw_orig in processed_my_software_originals: continue
-        if DEBUG: print(f"\n--- Comparing Your Software ({i+1}/{len(my_software_list)}): '{my_sw_orig}' ---")
+  // 3. Prepare data array to store link information
+  const linkData = [];
 
-        # --- Check Blacklist (Priority 1) ---
-        if my_sw_orig in MANUAL_BLACKLIST_SET:
-            result_entry['status'] = 'Not Found'; result_entry['reason'] = "Manual Blacklist"
-            if DEBUG: print(f"  Classification: Not Found (Manual Blacklist)")
-            comparison_results.append(result_entry); processed_my_software_originals.add(my_sw_orig); continue
+  // 4. Iterate through each link and extract text and URL
+  links.forEach(link => {
+    const linkText = link.textContent.trim(); // Get link text and trim whitespace
+    const url = link.getAttribute('href');    // Get the href attribute (URL)
 
-        # --- Check User Whitelist (Priority 2) ---
-        if my_sw_orig in MANUAL_USER_WHITELIST_SET:
-            result_entry['status'] = 'Full Match'; result_entry['reason'] = "Manual Whitelist (User)"
-            if DEBUG: print(f"  Classification: Full Match (Manual Whitelist User)")
-            comparison_results.append(result_entry); processed_my_software_originals.add(my_sw_orig); continue
+    if (url) { // Ensure there's a URL (href attribute exists)
+      linkData.push({
+        text: linkText || 'No Text', // Use 'No Text' if link text is empty
+        url: url
+      });
+    }
+  });
 
-        # --- Check Vendor Whitelist (Priority 3) ---
-        my_sw_orig_lower = my_sw_orig.lower() # Use lowercase version for checking
-        vendor_found = None
-        if DEBUG: print(f"  Checking for Vendors in: '{my_sw_orig_lower}'") # Added Debug
-        for vendor in VENDOR_WHITELIST_SET:
-            pattern = r'\b' + re.escape(vendor) + r'\b'
-            try:
-                 # Using re.IGNORECASE for extra safety, though should not be needed if list/input is lowercase
-                 match = re.search(pattern, my_sw_orig_lower, re.IGNORECASE)
-                 if DEBUG: print(f"    Checking Vendor: '{vendor}', Pattern: '{pattern}', Match: {bool(match)}") # Added Debug
-                 if match:
-                    vendor_found = vendor # Store the actual vendor found
-                    break # Stop checking vendors once one is found
-            except re.error as e:
-                 print(f"Warning: Regex error checking vendor '{vendor}' against '{my_sw_orig_lower}': {e}")
-                 continue
-        if vendor_found:
-            result_entry['status'] = 'Full Match'; result_entry['reason'] = f"Vendor Match ({vendor_found})"
-            if DEBUG: print(f"  Classification: Full Match (Vendor Match '{vendor_found}' found)")
-            comparison_results.append(result_entry)
-            processed_my_software_originals.add(my_sw_orig)
-            continue # IMPORTANT: Skip to next item in your list
+  // 5. Create the table element
+  const table = document.createElement('table');
+  table.classList.add('url-table'); // Add a class for styling if needed
 
-        # --- Normalize & Compare (Only if not caught by lists above) ---
-        # ... (Rest of the normalization and comparison logic remains exactly the same as the previous version) ...
-        my_sw_norm = normalize_name(my_sw_orig)
-        if not my_sw_norm:
-             result_entry['status'] = 'Not Found'; result_entry['reason'] = "Input empty after stop words"
-             if DEBUG: print(f"  Classification: Not Found (Empty Norm)")
-             comparison_results.append(result_entry); processed_my_software_originals.add(my_sw_orig); continue
-        my_sw_tokens = set(filter(None, my_sw_norm.split()))
-        if not my_sw_tokens:
-             result_entry['status'] = 'Not Found'; result_entry['reason'] = "Input has no valid tokens"
-             if DEBUG: print(f"  Classification: Not Found (No Tokens)")
-             comparison_results.append(result_entry); processed_my_software_originals.add(my_sw_orig); continue
-        if DEBUG: print(f"  Normalized: '{my_sw_norm}' | Tokens: {my_sw_tokens}")
+  // 6. Create table header row
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
 
-        found_direct_full_match = False
-        potential_partial_details = []
-        min_overall_jaccard = 1.1
-        best_overall_candidate_norm = None
-        db_check_counter = 0
+  const headerText = document.createElement('th');
+  headerText.textContent = 'Link Text';
+  headerRow.appendChild(headerText);
 
-        for db_norm, db_tokens in db_token_sets.items():
-            db_check_counter += 1;
-            if not db_tokens: continue;
-            symmetric_difference = my_sw_tokens.symmetric_difference(db_tokens)
-            sym_diff_len = len(symmetric_difference)
-            jaccard_dist = calculate_jaccard_distance(my_sw_tokens, db_tokens)
-            if jaccard_dist < min_overall_jaccard:
-                 min_overall_jaccard = jaccard_dist; best_overall_candidate_norm = db_norm
+  const headerURL = document.createElement('th');
+  headerURL.textContent = 'URL';
+  headerRow.appendChild(headerURL);
 
-            if sym_diff_len <= 1:
-                result_entry['status'] = 'Full Match'; result_entry['matched_db_orig'] = db_normalized_map[db_norm][0]
-                result_entry['reason'] = f"Symmetric Diff <= 1 (Size={sym_diff_len})"; result_entry['jaccard'] = jaccard_dist
-                found_direct_full_match = True; break
+  const headerCopy = document.createElement('th');
+  headerCopy.textContent = 'Copy to clipboard';
+  headerRow.appendChild(headerCopy);
 
-            criterion_A = (sym_diff_len == 2)
-            is_proper_subset_my_in_db = my_sw_tokens.issubset(db_tokens) and my_sw_tokens != db_tokens
-            is_proper_subset_db_in_my = db_tokens.issubset(my_sw_tokens) and my_sw_tokens != db_tokens
-            criterion_B = (is_proper_subset_my_in_db and len(my_sw_tokens) >= 2) or \
-                          (is_proper_subset_db_in_my and len(db_tokens) >= 2)
-            partial_reason = None
-            if criterion_A: partial_reason = "Symmetric Diff == 2"
-            if criterion_B: partial_reason = "Subset >= 2 tokens"
-            if partial_reason: potential_partial_details.append({'jaccard': jaccard_dist, 'db_norm': db_norm, 'reason': partial_reason})
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
 
-        # Final Classification (if comparison loop finished)
-        if not found_direct_full_match:
-            comparison_status = 'Not Found'; comparison_reason = None
-            comparison_matched_db = None; comparison_jaccard = None
-            comparison_all_partials = []
+  // 7. Create table body and rows for each link
+  const tbody = document.createElement('tbody');
 
-            if potential_partial_details:
-                 best_potential = min(potential_partial_details, key=lambda x: x['jaccard'])
-                 min_partial_jaccard = best_potential['jaccard']
-                 best_partial_reason = best_potential['reason']
-                 best_partial_db_norm = best_potential['db_norm']
-                 best_match_orig_db_entries = db_normalized_map[best_partial_db_norm]
-                 all_partial_db_origs_reporting = set()
-                 for detail in potential_partial_details: all_partial_db_origs_reporting.update(db_normalized_map[detail['db_norm']])
-                 comparison_all_partials = sorted(list(all_partial_db_origs_reporting))
+  linkData.forEach((link, index) => {
+    const row = document.createElement('tr');
 
-                 if min_partial_jaccard >= JACCARD_NO_MATCH_THRESHOLD:
-                      comparison_status = 'Not Found'
-                      comparison_reason = f"Weak Partial (Min Jaccard={min_partial_jaccard:.2f} >= {JACCARD_NO_MATCH_THRESHOLD:.2f})"
-                 elif min_partial_jaccard <= JACCARD_PROMOTION_THRESHOLD:
-                      comparison_status = 'Full Match'
-                      comparison_matched_db = best_match_orig_db_entries[0]
-                      comparison_reason = f"Promoted ({best_partial_reason}, Jaccard={min_partial_jaccard:.2f})"
-                      comparison_jaccard = min_partial_jaccard
-                 else: # True Partial Match
-                      comparison_status = 'Partial Match'
-                      comparison_matched_db = best_match_orig_db_entries[0]
-                      comparison_reason = f"{best_partial_reason}, Jaccard={min_partial_jaccard:.2f}"
-                      comparison_jaccard = min_partial_jaccard
-            else: # No direct match, no potential partials
-                 comparison_status = 'Not Found'
-                 comparison_reason = "No match criteria met"
+    // Link Text Cell
+    const textCell = document.createElement('td');
+    textCell.textContent = link.text;
+    row.appendChild(textCell);
 
-            # Update result entry with comparison outcome
-            result_entry['status'] = comparison_status
-            result_entry['reason'] = comparison_reason
-            result_entry['matched_db_orig'] = comparison_matched_db
-            result_entry['jaccard'] = comparison_jaccard
-            result_entry['all_partial_db_matches'] = comparison_all_partials
+    // URL Cell
+    const urlCell = document.createElement('td');
+    const urlLink = document.createElement('a');
+    urlLink.href = link.url;
+    urlLink.textContent = link.url;
+    urlLink.target = "_blank"; // Open links in a new tab
+    urlCell.appendChild(urlLink);
+    row.appendChild(urlCell);
 
-        # Set nearest candidate info if final status is Not Found
-        if result_entry['status'] == 'Not Found':
-             if best_overall_candidate_norm:
-                  result_entry['nearest_candidate_orig'] = db_normalized_map[best_overall_candidate_norm][0]
-                  result_entry['nearest_candidate_jaccard'] = min_overall_jaccard
-                  current_reason = result_entry['reason']
-                  if current_reason not in ["Manual Blacklist", "Input empty after stop words", "Input has no valid tokens"]:
-                       reason_suffix = f"Nearest Jaccard={min_overall_jaccard:.2f}"
-                       if current_reason and "Weak Partial" in current_reason:
-                            result_entry['reason'] = f"{current_reason} ({reason_suffix})"
-                       elif current_reason == "No match criteria met":
-                            result_entry['reason'] = reason_suffix
-                       elif not current_reason:
-                            result_entry['reason'] = reason_suffix
-             elif result_entry['reason'] is None or result_entry['reason'] == "No match criteria met":
-                  result_entry['reason'] = "No DB entries to compare"
+    // Copy Button Cell
+    const copyCell = document.createElement('td');
+    const copyButton = document.createElement('button');
+    copyButton.textContent = 'Copy';
+    copyButton.addEventListener('click', () => {
+      copyToClipboard(link.url, copyButton); // Call copy function
+    });
+    copyCell.appendChild(copyButton);
+    row.appendChild(copyCell);
 
-        # Append final result for this item
-        comparison_results.append(result_entry)
-        # processed_my_software_originals.add(my_sw_orig) # Already added at start
+    tbody.appendChild(row);
+  });
 
-    print("\nComparison complete.")
-    return comparison_results
+  table.appendChild(tbody);
+
+  return table; // Return the generated table element
+}
+
+// Helper function to copy text to clipboard
+function copyToClipboard(text, button) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text)
+      .then(() => {
+        button.textContent = 'Copied!';
+        setTimeout(() => {
+          button.textContent = 'Copy'; // Reset button text after a short delay
+        }, 1500); // Reset after 1.5 seconds
+      })
+      .catch(err => {
+        console.error('Failed to copy text: ', err);
+        alert('Failed to copy URL to clipboard. Please copy manually.');
+      });
+  } else {
+    // Fallback for browsers that don't support Clipboard API (older browsers)
+    fallbackCopyToClipboard(text, button);
+  }
+}
+
+// Fallback copy to clipboard for older browsers
+function fallbackCopyToClipboard(text, button) {
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+
+  // Avoid scrolling to bottom
+  textArea.style.top = "0";
+  textArea.style.left = "0";
+  textArea.style.position = "fixed";
+
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+
+  try {
+    const successful = document.execCommand('copy');
+    if (successful) {
+      button.textContent = 'Copied!';
+      setTimeout(() => {
+        button.textContent = 'Copy';
+      }, 1500);
+    } else {
+      alert('Failed to copy URL to clipboard. Please copy manually (Ctrl+C / Cmd+C).');
+    }
+  } catch (err) {
+    console.error('Fallback copy failed: ', err);
+    alert('Failed to copy URL to clipboard. Please copy manually.');
+  }
+
+  document.body.removeChild(textArea);
+}
+
+
+// --- Example Usage (You would run this part in your script after the function definition) ---
+const htmlContent = `
+  <p>Check out these links:</p>
+  <a href="https://www.example.com">Example Website</a>
+  <a href="https://www.google.com">Google</a>
+  <a href="mailto:test@example.com">Email Us</a>
+  <a href="tel:+15551234567">Call Us</a>
+  <a href="https://www.example.com/page with spaces">Link with Spaces</a>
+  <a href="">Empty URL Link</a>
+  <a>Link without href</a>
+  <a href="https://www.another-example.org">Another Example</a>
+  <a href="https://subdomain.example.com/path/to/resource">Subdomain Link</a>
+`;
+
+// Call the function to parse HTML and create the table
+const urlTable = parseUrlsAndDisplayTable(htmlContent);
+
+// Get the element where you want to display the table (e.g., a div with id="urlTableContainer")
+const container = document.getElementById('urlTableContainer'); // Make sure you have this element in your HTML
+
+if (container) {
+  container.appendChild(urlTable); // Append the table to the container
+} else {
+  console.error("Container element with id 'urlTableContainer' not found in the HTML.");
+  // You can append it to the body directly for testing if needed:
+  // document.body.appendChild(urlTable);
+}
+
+
+/* ---  Basic CSS for the table (Optional - Add to your CSS file or <style> tag) --- */
+/*
+.url-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-top: 20px;
+}
+
+.url-table th, .url-table td {
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: left;
+}
+
+.url-table th {
+  background-color: #f2f2f2;
+}
+
+.url-table td button {
+  padding: 5px 10px;
+  cursor: pointer;
+}
+*/
