@@ -1,51 +1,159 @@
-// Helper function to copy text to clipboard
-function copyToClipboard(text, button) {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(text)
-      .then(() => {
-        button.textContent = 'Copied!';
-        setTimeout(() => {
-          button.textContent = 'Copy'; // Reset button text after a short delay
-        }, 1500); // Reset after 1.5 seconds
-      })
-      .catch(err => {
-        console.error('Failed to copy text: ', err);
-        alert('Failed to copy URL to clipboard. Please copy manually.');
+function parseUrlsAndDisplayTable(html) {
+  // 1. Parse the HTML string into a DOM tree
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+
+  // 2. Find all anchor elements (<a> tags)
+  const links = doc.querySelectorAll('a');
+
+  // 3. Prepare data array to store link information
+  const linkData = [];
+
+  // 4. Iterate through each link and extract text and URL, then process URL
+  links.forEach(link => {
+    const linkText = link.textContent.trim(); // Get link text and trim whitespace
+    let url = link.getAttribute('href');    // Get the href attribute (URL)
+
+    if (url) { // Ensure there's a URL (href attribute exists)
+      // Check if it's a Safe Links URL
+      if (url.startsWith('https://gcc02.safelinks.protection.outlook.com/') ||
+          url.startsWith('https://na01.safelinks.protection.outlook.com/') ||
+          url.startsWith('https://emea01.safelinks.protection.outlook.com/') ||
+          url.startsWith('https://ap01.safelinks.protection.outlook.com/') || // Add more variations if needed
+          url.startsWith('https://safelinks.protection.outlook.com/')) { // Generic safelinks domain
+
+        try {
+          // Extract the 'url' parameter and URL-decode it
+          const urlParams = new URLSearchParams(new URL(url).search);
+          const decodedURL = urlParams.get('url');
+
+          if (decodedURL) {
+            url = decodeURIComponent(decodedURL); // Decode the URL-encoded original URL
+          }
+        } catch (error) {
+          console.error("Error processing Safe Links URL:", error, url);
+          // If there's an error parsing the Safe Links URL, fallback to using the original URL
+          // or handle it as needed for your application.
+          // For now, we'll use the original URL as fallback if parsing fails.
+        }
+      } else {
+        try {
+          url = decodeURIComponent(url); // Decode regular URL encoding if it's not a Safe Links URL
+        } catch (error) {
+          console.error("Error decoding URL:", error, url);
+          // Handle decoding errors for regular URLs if needed.
+        }
+      }
+
+
+      linkData.push({
+        text: linkText || 'No Text', // Use 'No Text' if link text is empty
+        url: url
       });
-  } else {
-    // Fallback for browsers that don't support Clipboard API (older browsers)
-    fallbackCopyToClipboard(text, button);
-  }
-}
-
-// Fallback copy to clipboard for older browsers
-function fallbackCopyToClipboard(text, button) {
-  const textArea = document.createElement("textarea");
-  textArea.value = text;
-
-  // Avoid scrolling to bottom
-  textArea.style.top = "0";
-  textArea.style.left = "0";
-  textArea.style.position = "fixed";
-
-  document.body.appendChild(textArea);
-  textArea.focus();
-  textArea.select();
-
-  try {
-    const successful = document.execCommand('copy');
-    if (successful) {
-      button.textContent = 'Copied!';
-      setTimeout(() => {
-        button.textContent = 'Copy';
-      }, 1500);
-    } else {
-      alert('Failed to copy URL to clipboard. Please copy manually (Ctrl+C / Cmd+C).');
     }
-  } catch (err) {
-    console.error('Fallback copy failed: ', err);
-    alert('Failed to copy URL to clipboard. Please copy manually.');
-  }
+  });
 
-  document.body.removeChild(textArea);
+  // 5. Create the table element
+  const table = document.createElement('table');
+  table.classList.add('url-table'); // Add a class for styling if needed
+
+  // 6. Create table header row
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+
+  const headerText = document.createElement('th');
+  headerText.textContent = 'Link Text';
+  headerRow.appendChild(headerText);
+
+  const headerURL = document.createElement('th');
+  headerURL.textContent = 'URL';
+  headerRow.appendChild(headerURL);
+
+  const headerCopy = document.createElement('th');
+  headerCopy.textContent = 'Copy to clipboard';
+  headerRow.appendChild(headerCopy);
+
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  // 7. Create table body and rows for each link
+  const tbody = document.createElement('tbody');
+
+  linkData.forEach((link, index) => {
+    const row = document.createElement('tr');
+
+    // Link Text Cell
+    const textCell = document.createElement('td');
+    textCell.textContent = link.text;
+    row.appendChild(textCell);
+
+    // URL Cell (changed to textarea)
+    const urlCell = document.createElement('td');
+    const urlTextArea = document.createElement('textarea');
+    urlTextArea.value = link.url;
+    urlTextArea.rows = 1; // Set to 1 row initially, adjust as needed
+    urlTextArea.classList.add('url-textarea'); // Add class for styling
+    urlTextArea.readOnly = true; // Make it read-only
+
+    urlCell.appendChild(urlTextArea);
+    row.appendChild(urlCell);
+
+    // Copy Button Cell
+    const copyCell = document.createElement('td');
+    const copyButton = document.createElement('button');
+    copyButton.textContent = 'Copy';
+    copyButton.addEventListener('click', () => {
+      copyToClipboard(link.url, copyButton); // Call copy function
+    });
+    copyCell.appendChild(copyButton);
+    row.appendChild(copyCell);
+
+    tbody.appendChild(row);
+  });
+
+  table.appendChild(tbody);
+
+  return table; // Return the generated table element
 }
+
+
+/* ---  Basic CSS for the table (Optional - Add to your CSS file or <style> tag) --- */
+/*
+.url-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-top: 20px;
+}
+
+.url-table th, .url-table td {
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;  /* Align content to the top in table cells */
+}
+
+.url-table th {
+  background-color: #f2f2f2;
+}
+
+.url-table td button {
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.url-textarea {
+  width: 100%; /* Take full width of the cell */
+  box-sizing: border-box; /* Include padding and border in element's total width and height */
+  resize: vertical; /* Allow vertical resizing by user */
+  overflow-y: auto; /* Enable vertical scroll if content overflows */
+  overflow-x: auto; /* Enable horizontal scroll if content overflows (for no-wrap effect) */
+  white-space: pre; /* Prevent wrapping of text within textarea */
+  font-family: monospace; /* Optional: Use monospace font for URLs */
+  font-size: 14px; /* Adjust font size as needed */
+  padding: 4px;
+  border: 1px solid #ccc;
+  background-color: #f9f9f9; /* Light background for readability */
+  min-height: 20px; /* Ensure some initial height */
+  max-height: 100px; /* Limit max height for vertical scroll to kick in */
+}
+*/
