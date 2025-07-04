@@ -1,94 +1,64 @@
-@page "/list-delete"
+def balance_item_groups(list_of_groups):
+    """
+    Balances the number of items across a list of lists (groups) in-place.
 
-<h3>List of Items</h3>
+    Args:
+        list_of_groups: A list containing other lists that will be modified.
+                        e.g., [group1, group2, group3]
+    """
+    if not list_of_groups:
+        return # Do nothing if the input is empty
 
-<button @onclick="AddItem">Add Item</button>
+    # Step 1: Pool all items into a single list
+    # A list comprehension is a concise way to do this
+    all_items = [item for group in list_of_groups for item in group]
+    
+    # Step 2: Calculate target sizes
+    num_groups = len(list_of_groups)
+    total_items = len(all_items)
+    
+    if total_items == 0:
+        return # Nothing to distribute
 
-@if (items.Any())
-{
-    <ul>
-        @foreach (var item in items)
-        {
-            <li @key="item.Id"> @* @key is highly recommended for list rendering efficiency *@
-                <ItemDisplay Data="item" OnDeleteRequest="() => HandleItemDelete(item.Id)" />
-            </li>
-        }
-    </ul>
-}
-else
-{
-    <p>No items to display.</p>
-}
+    base_size = total_items // num_groups
+    remainder = total_items % num_groups
+    
+    print(f"Total items: {total_items}, Groups: {num_groups}")
+    print(f"Base size per group: {base_size}, with {remainder} groups getting one extra item.")
+    print("-" * 20)
 
+    # Step 3: Clear and redistribute
+    current_position = 0
+    for i, group in enumerate(list_of_groups):
+        # The first 'remainder' groups get an extra item
+        num_to_assign = base_size + 1 if i < remainder else base_size
+        
+        # Define the slice of items for the current group
+        new_content = all_items[current_position : current_position + num_to_assign]
+        
+        # Modify the original list in-place
+        group.clear()
+        group.extend(new_content)
+        
+        # Update the position for the next slice
+        current_position += num_to_assign
 
-@code {
-    private List<ItemModel> items = new List<ItemModel>();
-    private int nextId = 1;
+# --- Your Example ---
+group1 = ['A1', 'A2']
+group2 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8']
+group3 = ['C1']
+group4 = ['D1', 'D2', 'D3']
+group5 = [] # Important to handle empty lists correctly
 
-    protected override void OnInitialized()
-    {
-        // Add some initial items
-        AddItem();
-        AddItem();
-    }
+# Put the lists themselves into a container list
+my_groups = [group1, group2, group3, group4, group5]
 
-    private void AddItem()
-    {
-        items.Add(new ItemModel { Id = nextId, Name = $"Item {nextId}" });
-        nextId++;
-    }
+print("--- Before Balancing ---")
+for i, g in enumerate(my_groups, 1):
+    print(f"Group {i} (size {len(g)}): {g}")
 
-    private void HandleItemDelete(int itemId)
-    {
-        var itemToRemove = items.FirstOrDefault(i => i.Id == itemId);
-        if (itemToRemove != null)
-        {
-            items.Remove(itemToRemove);
-            // StateHasChanged(); // Not strictly needed if OnDeleteRequest is from a child's @onclick
-                                // but good practice if the list modification happens elsewhere.
-        }
-    }
+balance_item_groups(my_groups)
 
-    public class ItemModel
-    {
-        public int Id { get; set; }
-        public string Name { get; set; } = string.Empty;
-    }
-}
-
-
-
-
-
-
-ChildItem:
-
-@implements IDisposable
-
-<div style="border: 1px solid blue; padding: 5px; margin: 5px;">
-    <span>ID: @Data.Id, Name: @Data.Name</span>
-    <button @onclick="RequestDelete">Delete Me</button>
-</div>
-
-@code {
-    [Parameter]
-    public ListComponent.ItemModel Data { get; set; } = new(); // Initialize to avoid null issues
-
-    [Parameter]
-    public EventCallback OnDeleteRequest { get; set; }
-
-    private async Task RequestDelete()
-    {
-        await OnDeleteRequest.InvokeAsync();
-    }
-
-    protected override void OnInitialized()
-    {
-        Console.WriteLine($"ItemDisplay ({Data?.Id} - {this.GetHashCode()}) Initialized.");
-    }
-
-    public void Dispose()
-    {
-        Console.WriteLine($"ItemDisplay ({Data?.Id} - {this.GetHashCode()}) Disposed.");
-    }
-}
+print("\n--- After Balancing ---")
+for i, g in enumerate(my_groups, 1):
+    print(f"Group {i} (size {len(g)}): {g}")
