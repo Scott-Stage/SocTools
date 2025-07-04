@@ -1,64 +1,47 @@
-def balance_item_groups(list_of_groups):
+def balance_item_groups_robust(list_of_groups):
     """
     Balances the number of items across a list of lists (groups) in-place.
+    This version safely handles groups that might be None or other non-list types.
 
     Args:
         list_of_groups: A list containing other lists that will be modified.
-                        e.g., [group1, group2, group3]
     """
-    if not list_of_groups:
-        return # Do nothing if the input is empty
+    # Filter out any groups that are None or not valid lists before processing
+    valid_groups = [g for g in list_of_groups if isinstance(g, list)]
+    if not valid_groups:
+        print("No valid groups to balance.")
+        return
 
-    # Step 1: Pool all items into a single list
-    # A list comprehension is a concise way to do this
-    all_items = [item for group in list_of_groups for item in group]
+    # Step 1: Pool all items from valid groups into a single list.
+    # The 'if group' check skips both empty lists and None values gracefully.
+    all_items = [item for group in valid_groups if group for item in group]
     
-    # Step 2: Calculate target sizes
-    num_groups = len(list_of_groups)
+    # Step 2: Calculate target sizes based on valid groups
+    num_groups = len(valid_groups)
     total_items = len(all_items)
     
     if total_items == 0:
-        return # Nothing to distribute
+        # Clear all valid groups if there are no items to distribute
+        for group in valid_groups:
+            group.clear()
+        return
 
     base_size = total_items // num_groups
     remainder = total_items % num_groups
     
-    print(f"Total items: {total_items}, Groups: {num_groups}")
+    print(f"Total items: {total_items}, Valid groups: {num_groups}")
     print(f"Base size per group: {base_size}, with {remainder} groups getting one extra item.")
     print("-" * 20)
 
-    # Step 3: Clear and redistribute
+    # Step 3: Clear and redistribute into the original valid lists
     current_position = 0
-    for i, group in enumerate(list_of_groups):
-        # The first 'remainder' groups get an extra item
+    for i, group in enumerate(valid_groups):
         num_to_assign = base_size + 1 if i < remainder else base_size
         
-        # Define the slice of items for the current group
         new_content = all_items[current_position : current_position + num_to_assign]
         
         # Modify the original list in-place
         group.clear()
         group.extend(new_content)
         
-        # Update the position for the next slice
         current_position += num_to_assign
-
-# --- Your Example ---
-group1 = ['A1', 'A2']
-group2 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8']
-group3 = ['C1']
-group4 = ['D1', 'D2', 'D3']
-group5 = [] # Important to handle empty lists correctly
-
-# Put the lists themselves into a container list
-my_groups = [group1, group2, group3, group4, group5]
-
-print("--- Before Balancing ---")
-for i, g in enumerate(my_groups, 1):
-    print(f"Group {i} (size {len(g)}): {g}")
-
-balance_item_groups(my_groups)
-
-print("\n--- After Balancing ---")
-for i, g in enumerate(my_groups, 1):
-    print(f"Group {i} (size {len(g)}): {g}")
