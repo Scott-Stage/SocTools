@@ -1,47 +1,41 @@
-def balance_item_groups_robust(list_of_groups):
-    """
-    Balances the number of items across a list of lists (groups) in-place.
-    This version safely handles groups that might be None or other non-list types.
+import time
+import sys
 
+def simple_progress_bar(iteration, total, bar_length=50):
+    """
+    Displays a simple progress bar.
+    
     Args:
-        list_of_groups: A list containing other lists that will be modified.
+        iteration (int): The current iteration number (should be 0-indexed).
+        total (int): The total number of iterations.
+        bar_length (int): The character length of the progress bar.
     """
-    # Filter out any groups that are None or not valid lists before processing
-    valid_groups = [g for g in list_of_groups if isinstance(g, list)]
-    if not valid_groups:
-        print("No valid groups to balance.")
-        return
-
-    # Step 1: Pool all items from valid groups into a single list.
-    # The 'if group' check skips both empty lists and None values gracefully.
-    all_items = [item for group in valid_groups if group for item in group]
+    # Calculate the percentage complete
+    percent = 100.0 * (iteration + 1) / total
     
-    # Step 2: Calculate target sizes based on valid groups
-    num_groups = len(valid_groups)
-    total_items = len(all_items)
+    # Calculate the number of filled blocks in the bar
+    filled_length = int(bar_length * (iteration + 1) // total)
     
-    if total_items == 0:
-        # Clear all valid groups if there are no items to distribute
-        for group in valid_groups:
-            group.clear()
-        return
-
-    base_size = total_items // num_groups
-    remainder = total_items % num_groups
+    # Create the bar string
+    bar = '█' * filled_length + '-' * (bar_length - filled_length)
     
-    print(f"Total items: {total_items}, Valid groups: {num_groups}")
-    print(f"Base size per group: {base_size}, with {remainder} groups getting one extra item.")
-    print("-" * 20)
+    # The final output string
+    # \r moves the cursor to the beginning of the line
+    # The end=' ' prevents the default newline character
+    output_str = f'\rProgress: |{bar}| {percent:.1f}% Complete'
+    
+    # Write the output and flush it to the screen
+    sys.stdout.write(output_str)
+    sys.stdout.flush()
 
-    # Step 3: Clear and redistribute into the original valid lists
-    current_position = 0
-    for i, group in enumerate(valid_groups):
-        num_to_assign = base_size + 1 if i < remainder else base_size
-        
-        new_content = all_items[current_position : current_position + num_to_assign]
-        
-        # Modify the original list in-place
-        group.clear()
-        group.extend(new_content)
-        
-        current_position += num_to_assign
+# --- Example Usage ---
+print("Starting a simple task...")
+total_items = 200
+for i in range(total_items):
+    # Do some work
+    time.sleep(0.02)
+    # Update the progress bar
+    simple_progress_bar(i, total_items)
+
+# Print a newline at the end to move to the next line
+print("\nTask finished!")
