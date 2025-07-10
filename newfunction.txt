@@ -1,61 +1,110 @@
-export function scrollToBottom(elementId) {
-  const element = document.getElementById(elementId);
-  if (element) {
-    element.scrollTop = element.scrollHeight;
-  }
-}
-
-
-
 @page "/file-reader"
 @using System.IO
 @using System.Text
 @using System.Threading
 @inject IJSRuntime JSRuntime
-@implements IAsyncDisposable @* Use IAsyncDisposable for async cleanup *@
+@implements IAsyncDisposable
 
 <h1>Real-time File Content Viewer</h1>
 
-<p>
-    <label for="filePath">File Path:</label>
-    <input id="filePath" @bind="filePath" style="width: 500px;" />
-</p>
+<!-- 1. Set this path to the directory containing your files -->
+@code {
+    private string directoryPath = @"C:\Your\Log\Directory"; 
+    private string filePath { get; set; } = @"C:\Your\Log\Directory\service-a.log"; // 2. Set this to the file you want to auto-select and start with
+}
 
-<p>
-    <label for="refreshInterval">Refresh Interval (ms):</label>
-    <input id="refreshInterval" type="number" @bind="refreshInterval" />
-</p>
+<div>
+    <label for="file-selector">Select File:</label>
+    <select id="file-selector" class="form-control" @onchange="OnFileSelectionChanged">
+        <option value="" disabled="@(availableFiles.Any())">-- Select a file --</option>
+        @foreach (var file in availableFiles)
+        {
+            <!-- 3. Pre-select the option that matches the initial filePath -->
+            <option value="@file" selected="@(file == filePath)">@Path.GetFileName(file)</option>
+        }
+    </select>
+</div>
 
-<button class="btn btn-primary" @onclick="StartReading">Start Reading</button>
-<button class="btn btn-secondary" @onclick="StopReading">Stop Reading</button>
+@if (!string.IsNullOrEmpty(statusMessage))
+{
+    <div class="alert alert-warning mt-2" role="alert">
+        @statusMessage
+    </div>
+}
 
 <hr />
 
-<h3>File Content:</h3>
+<h3>Content of: @(Path.GetFileName(filePath))</h3>
 
 <div id="file-content-container" style="height: 800px; overflow-y: scroll; border: 1px solid #ccc; background-color: #f5f5f5;">
     <pre>@fileContent</pre>
 </div>
 
 @code {
-    private string? filePath = "C:\\path\\to\\your\\file.txt"; // TODO: Change this to the path of the file you want to monitor.
-    private int refreshInterval = 1000;
+    private List<string> availableFiles = new();
+    private string? statusMessage;
     private string? fileContent;
     private Timer? timer;
     private bool shouldScrollToBottom = false;
-
-    // This will hold a reference to our isolated JavaScript module
     private IJSObjectReference? module;
+
+    // 4. OnInitialized runs when the component is first created
+    protected override void OnInitialized()
+    {
+        LoadAvailableFiles();
+        // If the pre-selected file exists, start reading it immediately.
+        if (availableFiles.Contains(filePath))
+        {
+            StartReading();
+        }
+    }
+
+    private void LoadAvailableFiles()
+    {
+        try
+        {
+            if (Directory.Exists(directoryPath))
+            {
+                availableFiles = Directory.GetFiles(directoryPath).ToList();
+                statusMessage = availableFiles.Any() ? null : "No files found in the directory.";
+            }
+            else
+            {
+                statusMessage = $"Error: Directory not found '{directoryPath}'. Please check the path in the component.";
+            }
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Error reading directory: {ex.Message}";
+        }
+    }
+
+    // 5. This method is triggered when a new item is selected in the dropdown
+    private async Task OnFileSelectionChanged(ChangeEventArgs e)
+    {
+        var newFilePath = e.Value?.ToString();
+        if (string.IsNullOrEmpty(newFilePath) || newFilePath == filePath)
+        {
+            return;
+        }
+
+        StopReading();
+        filePath = newFilePath;
+        fileContent = "Loading content..."; // Provide immediate feedback
+        await InvokeAsync(StateHasChanged); // Update the UI to show the "Loading..." message
+
+        StartReading();
+    }
 
     private void StartReading()
     {
         timer?.Dispose();
-        timer = new Timer(async _ => await ReadFile(), null, 0, refreshInterval);
+        // Read immediately once, then start the timer for subsequent reads.
+        timer = new Timer(async _ => await ReadFile(), null, 0, 1000);
     }
 
     private async Task ReadFile()
     {
-        // ... (ReadFile logic is the same as before)
         try
         {
             if (File.Exists(filePath))
@@ -80,20 +129,17 @@ export function scrollToBottom(elementId) {
         {
             fileContent = $"Error reading file: {ex.Message}";
         }
+        
         await InvokeAsync(StateHasChanged);
     }
-
+    
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // On the first render, load the JavaScript module.
         if (firstRender)
         {
-            // The path './' refers to the location of the current component.
-            // Blazor knows to look for FileContentReader.razor.js
             module = await JSRuntime.InvokeAsync<IJSObjectReference>("import", "./FileContentReader.razor.js");
         }
 
-        // If a scroll is needed and the module is loaded, perform the scroll.
         if (shouldScrollToBottom && module is not null)
         {
             await module.InvokeVoidAsync("scrollToBottom", "file-content-container");
@@ -106,7 +152,6 @@ export function scrollToBottom(elementId) {
         timer?.Dispose();
     }
 
-    // Implement IAsyncDisposable to clean up the JS module reference
     async ValueTask IAsyncDisposable.DisposeAsync()
     {
         if (module is not null)
@@ -115,11 +160,4 @@ export function scrollToBottom(elementId) {
         }
         timer?.Dispose();
     }
-}```
-
-### Why This Approach is Better
-
-1.  **Encapsulation:** All the logic (HTML, C#, and JS) for your component is located in one place, making it easy to manage, reuse, and share.
-2.  **No Global Scope Pollution:** The `scrollToBottom` function is part of a module, not attached to the global `window` object. This prevents conflicts with other scripts in your application.
-3.  **On-Demand Loading:** The JavaScript file is only downloaded to the client's browser when the component that needs it is actually rendered on a page.
-4.  **Robustness:** This is the officially supported and documented method from Microsoft for JS Interop, making it the most reliable and future-proof option.
+}
