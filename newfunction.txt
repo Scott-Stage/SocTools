@@ -1,41 +1,76 @@
-import time
-import sys
+@page "/file-reader"
+@using System.IO
+@using System.Text
+@using System.Threading
 
-def simple_progress_bar(iteration, total, bar_length=50):
-    """
-    Displays a simple progress bar.
-    
-    Args:
-        iteration (int): The current iteration number (should be 0-indexed).
-        total (int): The total number of iterations.
-        bar_length (int): The character length of the progress bar.
-    """
-    # Calculate the percentage complete
-    percent = 100.0 * (iteration + 1) / total
-    
-    # Calculate the number of filled blocks in the bar
-    filled_length = int(bar_length * (iteration + 1) // total)
-    
-    # Create the bar string
-    bar = '█' * filled_length + '-' * (bar_length - filled_length)
-    
-    # The final output string
-    # \r moves the cursor to the beginning of the line
-    # The end=' ' prevents the default newline character
-    output_str = f'\rProgress: |{bar}| {percent:.1f}% Complete'
-    
-    # Write the output and flush it to the screen
-    sys.stdout.write(output_str)
-    sys.stdout.flush()
+@implements IDisposable
 
-# --- Example Usage ---
-print("Starting a simple task...")
-total_items = 200
-for i in range(total_items):
-    # Do some work
-    time.sleep(0.02)
-    # Update the progress bar
-    simple_progress_bar(i, total_items)
+<h1>Real-time File Content Viewer</h1>
 
-# Print a newline at the end to move to the next line
-print("\nTask finished!")
+<p>
+    <label for="filePath">File Path:</label>
+    <input id="filePath" @bind="filePath" style="width: 500px;" />
+</p>
+
+<p>
+    <label for="refreshInterval">Refresh Interval (ms):</label>
+    <input id="refreshInterval" type="number" @bind="refreshInterval" />
+</p>
+
+<button class="btn btn-primary" @onclick="StartReading">Start Reading</button>
+<button class="btn btn-secondary" @onclick="StopReading">Stop Reading</button>
+
+<hr />
+
+<h3>File Content:</h3>
+<pre>@fileContent</pre>
+
+@code {
+    private string? filePath = "C:\\path\\to\\your\\file.txt"; // TODO: Change this to the path of the file you want to monitor.
+    private int refreshInterval = 1000;
+    private string? fileContent;
+    private Timer? timer;
+
+    private void StartReading()
+    {
+        timer?.Dispose();
+        timer = new Timer(async _ => await ReadFile(), null, 0, refreshInterval);
+    }
+
+    private async Task ReadFile()
+    {
+        try
+        {
+            if (File.Exists(filePath))
+            {
+                // By using FileShare.ReadWrite, we can read the file even if it's currently being written to by another process.
+                using (var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var streamReader = new StreamReader(fileStream, Encoding.UTF8))
+                {
+                    fileContent = await streamReader.ReadToEndAsync();
+                }
+            }
+            else
+            {
+                fileContent = "File not found.";
+            }
+        }
+        catch (Exception ex)
+        {
+            fileContent = $"Error reading file: {ex.Message}";
+        }
+
+        // We are on a background thread, so we need to use InvokeAsync to update the UI. [2, 4, 9]
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void StopReading()
+    {
+        timer?.Dispose();
+    }
+
+    public void Dispose()
+    {
+        timer?.Dispose();
+    }
+}
