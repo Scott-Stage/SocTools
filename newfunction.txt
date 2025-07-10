@@ -2,7 +2,7 @@
 @using System.IO
 @using System.Text
 @using System.Threading
-
+@inject IJSRuntime JSRuntime
 @implements IDisposable
 
 <h1>Real-time File Content Viewer</h1>
@@ -23,13 +23,18 @@
 <hr />
 
 <h3>File Content:</h3>
-<pre>@fileContent</pre>
+
+<!-- 1. The scrollable container with an id -->
+<div id="file-content-container" style="height: 800px; overflow-y: scroll; border: 1px solid #ccc; background-color: #f5f5f5;">
+    <pre>@fileContent</pre>
+</div>
 
 @code {
     private string? filePath = "C:\\path\\to\\your\\file.txt"; // TODO: Change this to the path of the file you want to monitor.
     private int refreshInterval = 1000;
     private string? fileContent;
     private Timer? timer;
+    private bool shouldScrollToBottom = false;
 
     private void StartReading()
     {
@@ -43,11 +48,15 @@
         {
             if (File.Exists(filePath))
             {
-                // By using FileShare.ReadWrite, we can read the file even if it's currently being written to by another process.
                 using (var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 using (var streamReader = new StreamReader(fileStream, Encoding.UTF8))
                 {
-                    fileContent = await streamReader.ReadToEndAsync();
+                    string newContent = await streamReader.ReadToEndAsync();
+                    if (newContent != fileContent)
+                    {
+                        fileContent = newContent;
+                        shouldScrollToBottom = true; // Flag that a scroll is needed
+                    }
                 }
             }
             else
@@ -59,9 +68,19 @@
         {
             fileContent = $"Error reading file: {ex.Message}";
         }
-
-        // We are on a background thread, so we need to use InvokeAsync to update the UI. [2, 4, 9]
+        
         await InvokeAsync(StateHasChanged);
+    }
+
+    // 2. This method is called after the component has rendered.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (shouldScrollToBottom)
+        {
+            // 3. Call the JavaScript function to scroll the div.
+            await JSRuntime.InvokeVoidAsync("scrollToBottom", "file-content-container");
+            shouldScrollToBottom = false; // Reset the flag
+        }
     }
 
     private void StopReading()
@@ -74,3 +93,21 @@
         timer?.Dispose();
     }
 }
+
+
+
+
+    ...
+    <script src="_framework/blazor.server.js"></script>
+
+    <!-- 4. Add this script -->
+    <script>
+      window.scrollToBottom = (elementId) => {
+        var element = document.getElementById(elementId);
+        if (element) {
+          element.scrollTop = element.scrollHeight;
+        }
+      };
+    </script>
+</body>
+</html>
