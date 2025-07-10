@@ -1,9 +1,18 @@
+export function scrollToBottom(elementId) {
+  const element = document.getElementById(elementId);
+  if (element) {
+    element.scrollTop = element.scrollHeight;
+  }
+}
+
+
+
 @page "/file-reader"
 @using System.IO
 @using System.Text
 @using System.Threading
 @inject IJSRuntime JSRuntime
-@implements IDisposable
+@implements IAsyncDisposable @* Use IAsyncDisposable for async cleanup *@
 
 <h1>Real-time File Content Viewer</h1>
 
@@ -24,7 +33,6 @@
 
 <h3>File Content:</h3>
 
-<!-- 1. The scrollable container with an id -->
 <div id="file-content-container" style="height: 800px; overflow-y: scroll; border: 1px solid #ccc; background-color: #f5f5f5;">
     <pre>@fileContent</pre>
 </div>
@@ -36,6 +44,9 @@
     private Timer? timer;
     private bool shouldScrollToBottom = false;
 
+    // This will hold a reference to our isolated JavaScript module
+    private IJSObjectReference? module;
+
     private void StartReading()
     {
         timer?.Dispose();
@@ -44,6 +55,7 @@
 
     private async Task ReadFile()
     {
+        // ... (ReadFile logic is the same as before)
         try
         {
             if (File.Exists(filePath))
@@ -55,7 +67,7 @@
                     if (newContent != fileContent)
                     {
                         fileContent = newContent;
-                        shouldScrollToBottom = true; // Flag that a scroll is needed
+                        shouldScrollToBottom = true;
                     }
                 }
             }
@@ -68,18 +80,24 @@
         {
             fileContent = $"Error reading file: {ex.Message}";
         }
-        
         await InvokeAsync(StateHasChanged);
     }
 
-    // 2. This method is called after the component has rendered.
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (shouldScrollToBottom)
+        // On the first render, load the JavaScript module.
+        if (firstRender)
         {
-            // 3. Call the JavaScript function to scroll the div.
-            await JSRuntime.InvokeVoidAsync("scrollToBottom", "file-content-container");
-            shouldScrollToBottom = false; // Reset the flag
+            // The path './' refers to the location of the current component.
+            // Blazor knows to look for FileContentReader.razor.js
+            module = await JSRuntime.InvokeAsync<IJSObjectReference>("import", "./FileContentReader.razor.js");
+        }
+
+        // If a scroll is needed and the module is loaded, perform the scroll.
+        if (shouldScrollToBottom && module is not null)
+        {
+            await module.InvokeVoidAsync("scrollToBottom", "file-content-container");
+            shouldScrollToBottom = false;
         }
     }
 
@@ -88,26 +106,20 @@
         timer?.Dispose();
     }
 
-    public void Dispose()
+    // Implement IAsyncDisposable to clean up the JS module reference
+    async ValueTask IAsyncDisposable.DisposeAsync()
     {
+        if (module is not null)
+        {
+            await module.DisposeAsync();
+        }
         timer?.Dispose();
     }
-}
+}```
 
+### Why This Approach is Better
 
-
-
-    ...
-    <script src="_framework/blazor.server.js"></script>
-
-    <!-- 4. Add this script -->
-    <script>
-      window.scrollToBottom = (elementId) => {
-        var element = document.getElementById(elementId);
-        if (element) {
-          element.scrollTop = element.scrollHeight;
-        }
-      };
-    </script>
-</body>
-</html>
+1.  **Encapsulation:** All the logic (HTML, C#, and JS) for your component is located in one place, making it easy to manage, reuse, and share.
+2.  **No Global Scope Pollution:** The `scrollToBottom` function is part of a module, not attached to the global `window` object. This prevents conflicts with other scripts in your application.
+3.  **On-Demand Loading:** The JavaScript file is only downloaded to the client's browser when the component that needs it is actually rendered on a page.
+4.  **Robustness:** This is the officially supported and documented method from Microsoft for JS Interop, making it the most reliable and future-proof option.
