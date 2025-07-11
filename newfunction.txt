@@ -76,3 +76,9 @@
 .drive-bar-used.low-space {
     background-color: #d9534f; /* A clear red color */
 }
+
+
+
+
+
+<DriveCapacityBar TotalCapacityGB="476" FreeSpaceGB="123.5" />
