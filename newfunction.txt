@@ -1,37 +1,26 @@
-@using System.Globalization
+AppState.cs (Create this file anywhere, e.g., in a State folder)
 
-<div class="drive-bar-container">
-    <div class="drive-bar-details">
-        <!-- Display the formatted text -->
-        <span class="drive-bar-label">@($"{FreeSpaceGB:N1} GB free of {TotalCapacityGB:N1} GB")</span>
-    </div>
-    
-    <!-- The outer bar -->
-    <div class="drive-bar-background">
-        <!-- The inner bar that shows the used space. Its style is set dynamically. -->
-        <div class="drive-bar-used @(IsLowOnSpace ? "low-space" : "")" style="width: @(UsedPercentage.ToString(CultureInfo.InvariantCulture))%;">
-        </div>
-    </div>
-</div>
-
-@code {
-    [Parameter]
-    public double TotalCapacityGB { get; set; }
-
-    [Parameter]
-    public double FreeSpaceGB { get; set; }
-
-    private double UsedSpaceGB => TotalCapacityGB - FreeSpaceGB;
-    private double UsedPercentage => (TotalCapacityGB > 0) ? (UsedSpaceGB / TotalCapacityGB * 100) : 0;
-    private bool IsLowOnSpace => (TotalCapacityGB > 0) && ((FreeSpaceGB / TotalCapacityGB) < 0.10);
-
-    // This ensures parameters are validated when the component is used.
-    protected override void OnInitialized()
+namespace YourProjectName.State
+{
+    public class AppState
     {
-        if (TotalCapacityGB < 0 || FreeSpaceGB < 0 || FreeSpaceGB > TotalCapacityGB)
+        // The shared value
+        public double WarningThreshold { get; private set; } = 0.10; // Default value
+
+        // An event that components will subscribe to
+        public event Action? OnChange;
+
+        // A method to change the state and notify subscribers
+        public void SetWarningThreshold(double threshold)
         {
-            throw new ArgumentException("Invalid drive capacity or free space values provided.");
+            if (threshold > 0 && threshold < 1)
+            {
+                WarningThreshold = threshold;
+                NotifyStateChanged();
+            }
         }
+
+        private void NotifyStateChanged() => OnChange?.Invoke();
     }
 }
 
@@ -39,46 +28,54 @@
 
 
 
+Program.cs
 
-/* Main container for the component */
-.drive-bar-container {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    color: #333;
-    max-width: 300px; /* Or whatever width you prefer */
+using YourProjectName.State; // Add this using directive
+
+// ... other using directives
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services to the container.
+builder.Services.AddRazorPages();
+builder.Services.AddServerSideBlazor();
+
+// Register the AppState as a singleton
+builder.Services.AddSingleton<AppState>(); 
+
+// ... rest of the file
+
+
+
+
+DriveCapacityBar.razor
+
+@inject AppState AppState
+@implements IDisposable
+@* --- rest of the component is the same --- *@
+...
+@code {
+    [Parameter]
+    public double TotalCapacityGB { get; set; }
+
+    [Parameter]
+    public double FreeSpaceGB { get; set; }
+    
+    private double UsedSpaceGB => TotalCapacityGB - FreeSpaceGB;
+    private double UsedPercentage => (TotalCapacityGB > 0) ? (UsedSpaceGB / TotalCapacityGB * 100) : 0;
+
+    // Use the value directly from the injected AppState service
+    private bool IsLowOnSpace => (TotalCapacityGB > 0) && ((FreeSpaceGB / TotalCapacityGB) < AppState.WarningThreshold);
+
+    protected override void OnInitialized()
+    {
+        // Subscribe to the OnChange event
+        AppState.OnChange += StateHasChanged;
+    }
+
+    // Unsubscribe from the event when the component is destroyed to prevent memory leaks
+    public void Dispose()
+    {
+        AppState.OnChange -= StateHasChanged;
+    }
 }
-
-/* Container for the text labels */
-.drive-bar-details {
-    margin-bottom: 4px;
-    font-size: 14px;
-}
-
-/* The background of the progress bar (the empty part) */
-.drive-bar-background {
-    background-color: #e6e6e6; /* A light grey color */
-    border-radius: 2px;
-    height: 16px;
-    width: 100%;
-    padding: 2px; /* A small padding to create a border effect */
-    box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
-    box-sizing: border-box;
-}
-
-/* The foreground of the progress bar (the 'used space' part) */
-.drive-bar-used {
-    height: 100%;
-    border-radius: 1px;
-    background-color: #5b9bd5; /* Standard Windows blue */
-    transition: width 0.5s ease-in-out, background-color 0.5s ease;
-}
-
-/* The critical/warning state class */
-.drive-bar-used.low-space {
-    background-color: #d9534f; /* A clear red color */
-}
-
-
-
-
-
-<DriveCapacityBar TotalCapacityGB="476" FreeSpaceGB="123.5" />
