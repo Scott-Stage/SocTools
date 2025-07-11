@@ -1,163 +1,78 @@
-@page "/file-reader"
-@using System.IO
-@using System.Text
-@using System.Threading
-@inject IJSRuntime JSRuntime
-@implements IAsyncDisposable
+@using System.Globalization
 
-<h1>Real-time File Content Viewer</h1>
-
-<!-- 1. Set this path to the directory containing your files -->
-@code {
-    private string directoryPath = @"C:\Your\Log\Directory"; 
-    private string filePath { get; set; } = @"C:\Your\Log\Directory\service-a.log"; // 2. Set this to the file you want to auto-select and start with
-}
-
-<div>
-    <label for="file-selector">Select File:</label>
-    <select id="file-selector" class="form-control" @onchange="OnFileSelectionChanged">
-        <option value="" disabled="@(availableFiles.Any())">-- Select a file --</option>
-        @foreach (var file in availableFiles)
-        {
-            <!-- 3. Pre-select the option that matches the initial filePath -->
-            <option value="@file" selected="@(file == filePath)">@Path.GetFileName(file)</option>
-        }
-    </select>
-</div>
-
-@if (!string.IsNullOrEmpty(statusMessage))
-{
-    <div class="alert alert-warning mt-2" role="alert">
-        @statusMessage
+<div class="drive-bar-container">
+    <div class="drive-bar-details">
+        <!-- Display the formatted text -->
+        <span class="drive-bar-label">@($"{FreeSpaceGB:N1} GB free of {TotalCapacityGB:N1} GB")</span>
     </div>
-}
-
-<hr />
-
-<h3>Content of: @(Path.GetFileName(filePath))</h3>
-
-<div id="file-content-container" style="height: 800px; overflow-y: scroll; border: 1px solid #ccc; background-color: #f5f5f5;">
-    <pre>@fileContent</pre>
+    
+    <!-- The outer bar -->
+    <div class="drive-bar-background">
+        <!-- The inner bar that shows the used space. Its style is set dynamically. -->
+        <div class="drive-bar-used @(IsLowOnSpace ? "low-space" : "")" style="width: @(UsedPercentage.ToString(CultureInfo.InvariantCulture))%;">
+        </div>
+    </div>
 </div>
 
 @code {
-    private List<string> availableFiles = new();
-    private string? statusMessage;
-    private string? fileContent;
-    private Timer? timer;
-    private bool shouldScrollToBottom = false;
-    private IJSObjectReference? module;
+    [Parameter]
+    public double TotalCapacityGB { get; set; }
 
-    // 4. OnInitialized runs when the component is first created
+    [Parameter]
+    public double FreeSpaceGB { get; set; }
+
+    private double UsedSpaceGB => TotalCapacityGB - FreeSpaceGB;
+    private double UsedPercentage => (TotalCapacityGB > 0) ? (UsedSpaceGB / TotalCapacityGB * 100) : 0;
+    private bool IsLowOnSpace => (TotalCapacityGB > 0) && ((FreeSpaceGB / TotalCapacityGB) < 0.10);
+
+    // This ensures parameters are validated when the component is used.
     protected override void OnInitialized()
     {
-        LoadAvailableFiles();
-        // If the pre-selected file exists, start reading it immediately.
-        if (availableFiles.Contains(filePath))
+        if (TotalCapacityGB < 0 || FreeSpaceGB < 0 || FreeSpaceGB > TotalCapacityGB)
         {
-            StartReading();
+            throw new ArgumentException("Invalid drive capacity or free space values provided.");
         }
     }
+}
 
-    private void LoadAvailableFiles()
-    {
-        try
-        {
-            if (Directory.Exists(directoryPath))
-            {
-                availableFiles = Directory.GetFiles(directoryPath).ToList();
-                statusMessage = availableFiles.Any() ? null : "No files found in the directory.";
-            }
-            else
-            {
-                statusMessage = $"Error: Directory not found '{directoryPath}'. Please check the path in the component.";
-            }
-        }
-        catch (Exception ex)
-        {
-            statusMessage = $"Error reading directory: {ex.Message}";
-        }
-    }
 
-    // 5. This method is triggered when a new item is selected in the dropdown
-    private async Task OnFileSelectionChanged(ChangeEventArgs e)
-    {
-        var newFilePath = e.Value?.ToString();
-        if (string.IsNullOrEmpty(newFilePath) || newFilePath == filePath)
-        {
-            return;
-        }
 
-        StopReading();
-        filePath = newFilePath;
-        fileContent = "Loading content..."; // Provide immediate feedback
-        await InvokeAsync(StateHasChanged); // Update the UI to show the "Loading..." message
 
-        StartReading();
-    }
 
-    private void StartReading()
-    {
-        timer?.Dispose();
-        // Read immediately once, then start the timer for subsequent reads.
-        timer = new Timer(async _ => await ReadFile(), null, 0, 1000);
-    }
 
-    private async Task ReadFile()
-    {
-        try
-        {
-            if (File.Exists(filePath))
-            {
-                using (var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                using (var streamReader = new StreamReader(fileStream, Encoding.UTF8))
-                {
-                    string newContent = await streamReader.ReadToEndAsync();
-                    if (newContent != fileContent)
-                    {
-                        fileContent = newContent;
-                        shouldScrollToBottom = true;
-                    }
-                }
-            }
-            else
-            {
-                fileContent = "File not found.";
-            }
-        }
-        catch (Exception ex)
-        {
-            fileContent = $"Error reading file: {ex.Message}";
-        }
-        
-        await InvokeAsync(StateHasChanged);
-    }
-    
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (firstRender)
-        {
-            module = await JSRuntime.InvokeAsync<IJSObjectReference>("import", "./FileContentReader.razor.js");
-        }
+/* Main container for the component */
+.drive-bar-container {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: #333;
+    max-width: 300px; /* Or whatever width you prefer */
+}
 
-        if (shouldScrollToBottom && module is not null)
-        {
-            await module.InvokeVoidAsync("scrollToBottom", "file-content-container");
-            shouldScrollToBottom = false;
-        }
-    }
+/* Container for the text labels */
+.drive-bar-details {
+    margin-bottom: 4px;
+    font-size: 14px;
+}
 
-    private void StopReading()
-    {
-        timer?.Dispose();
-    }
+/* The background of the progress bar (the empty part) */
+.drive-bar-background {
+    background-color: #e6e6e6; /* A light grey color */
+    border-radius: 2px;
+    height: 16px;
+    width: 100%;
+    padding: 2px; /* A small padding to create a border effect */
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
+    box-sizing: border-box;
+}
 
-    async ValueTask IAsyncDisposable.DisposeAsync()
-    {
-        if (module is not null)
-        {
-            await module.DisposeAsync();
-        }
-        timer?.Dispose();
-    }
+/* The foreground of the progress bar (the 'used space' part) */
+.drive-bar-used {
+    height: 100%;
+    border-radius: 1px;
+    background-color: #5b9bd5; /* Standard Windows blue */
+    transition: width 0.5s ease-in-out, background-color 0.5s ease;
+}
+
+/* The critical/warning state class */
+.drive-bar-used.low-space {
+    background-color: #d9534f; /* A clear red color */
 }
