@@ -1,63 +1,123 @@
-@page "/polling-component"
-@implements IDisposable
+tep 1: Enhance the ComponentTaskRunner Service
+We will modify the service to accept the component instance (this) in its Start method. This gives it the power to call InvokeAsync and StateHasChanged on behalf of the component.
+Generated csharp
+// Services/ComponentTaskRunner.cs
+using Microsoft.AspNetCore.Components;
 
-<h3>Live Data Poller</h3>
-<p>This component continuously polls for new data in the background.</p>
+// Still registered as Scoped in Program.cs
+// builder.Services.AddScoped<ComponentTaskRunner>();
+public class ComponentTaskRunner : IDisposable
+{
+    private ComponentBase? _owner;
+    private CancellationTokenSource? _cts;
 
-<p><strong>Status:</strong> @_message</p>
-
-@code {
-    private string _message = "Waiting for first poll...";
-
-    // The "off switch" for our background task
-    private CancellationTokenSource _cts = new CancellationTokenSource();
-
-    protected override void OnInitialized()
+    // We will now accept the component instance and the work to be done.
+    // Notice the work delegate is a simple Action or Func<Task>
+    // with no special parameters.
+    public void Start(ComponentBase owner, Func<Task> work, TimeSpan interval)
     {
-        // Fire-and-forget the long-running task.
-        // The `_` discards the returned Task, signaling we don't need to await it.
-        _ = DoContinuousWorkAsync();
+        _owner = owner;
+        _cts = new CancellationTokenSource();
+        _ = DoContinuousWorkAsync(work, interval, _cts.Token);
     }
 
-    private async Task DoContinuousWorkAsync()
+    public void Start(ComponentBase owner, Action work, TimeSpan interval)
     {
-        while (!_cts.Token.IsCancellationRequested)
+        // Overload for synchronous work. We wrap it in a Task for the loop.
+        Func<Task> asyncWork = () => {
+            work();
+            return Task.CompletedTask;
+        };
+        Start(owner, asyncWork, interval);
+    }
+
+    private async Task DoContinuousWorkAsync(Func<Task> work, TimeSpan interval, CancellationToken token)
+    {
+        while (!token.IsCancellationRequested)
         {
-            // Simulate fetching data from an external source
-            var data = await GetCurrentDataPoint();
-
-            // InvokeAsync is CRITICAL for safely updating the UI from a different thread
-            await InvokeAsync(() =>
-            {
-                _message = $"Last check at {DateTime.Now:T}. Current value: {data}";
-                StateHasChanged(); // Tell Blazor to update the display
-            });
-
             try
             {
-                // Wait for 5 seconds, but stop immediately if cancellation is requested
-                await Task.Delay(TimeSpan.FromSeconds(5), _cts.Token);
+                // 1. Do the simple work the developer provided.
+                await work();
+
+                // 2. THE MAGIC: The runner now handles UI updates automatically!
+                // It calls StateHasChanged on the owner component's render handle.
+                if (_owner is not null)
+                {
+                    await _owner.InvokeAsync(_owner.StateHasChanged);
+                }
+
+                // 3. Wait for the next interval.
+                await Task.Delay(interval, token);
             }
             catch (OperationCanceledException)
             {
-                // This is the expected result when Dispose() is called.
-                // The loop will exit cleanly.
-                break;
+                break; // Expected on dispose
+            }
+            catch (Exception ex)
+            {
+                // It's good practice to log errors from the background task.
+                Console.WriteLine($"Error in component background task: {ex.Message}");
             }
         }
     }
 
-    // This is just a placeholder for a real API call
-    private Task<int> GetCurrentDataPoint()
-    {
-        return Task.FromResult(new Random().Next(100));
-    }
-
-    // This method is called by the framework when the component is removed from the UI
     public void Dispose()
     {
-        // Send the cancellation signal to the background task
-        _cts.Cancel();
-        _cts.Dispose();
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}
+Use code with caution.
+C#
+Step 2: Simplify the Component Implementation
+Now, look at how clean and simple the component code becomes. The developer using the TaskRunner no longer needs to know anything about InvokeAsync or StateHasChanged.
+Before (The "Leaky" Way):
+Generated csharp
+// The developer had to remember to do this:
+private async Task FetchWeatherAsync(CancellationToken token)
+{
+    // ... logic ...
+    await InvokeAsync(() =>
+    {
+        _weatherSummary = "New summary";
+        StateHasChanged();
+    });
+}
+Use code with caution.
+C#
+After (The Abstracted Way):
+The component developer's experience is now incredibly simple.
+Generated razor
+@page "/live-clock"
+@implements IDisposable
+@inject ComponentTaskRunner TaskRunner
+
+<h3>Live Clock</h3>
+<p>Current Time: @_currentTime.ToString("T")</p>
+
+@code {
+    private DateTime _currentTime;
+
+    protected override void OnInitialized()
+    {
+        // The API is now beautifully simple:
+        // 1. Who I am (this)
+        // 2. What to do (UpdateTheTime)
+        // 3. How often (every second)
+        TaskRunner.Start(this, UpdateTheTime, TimeSpan.FromSeconds(1));
+    }
+
+    // This method is now PURE logic. No Blazor-specific code needed!
+    // It's easy to read, easy to test, and impossible to get wrong.
+    private void UpdateTheTime()
+    {
+        _currentTime = DateTime.Now;
+    }
+
+    // The component is still responsible for cleaning up what it starts.
+    public void Dispose()
+    {
+        TaskRunner.Dispose();
     }
 }
