@@ -1,18 +1,11 @@
 // Services/ComponentTaskRunner.cs
-// No change to registration in Program.cs
 public class ComponentTaskRunner : IDisposable
 {
     private CancellationTokenSource? _cts;
 
-    // THE KEY CHANGE IS HERE: `params Func<Task>[] workFunctions`
-    // The `params` array must be the last argument.
     public void Start(TimeSpan interval, Action onStateHasChanged, params Func<Task>[] workFunctions)
     {
-        if (workFunctions == null || workFunctions.Length == 0)
-        {
-            // Do nothing if no work was provided.
-            return;
-        }
+        if (workFunctions == null || workFunctions.Length == 0) return;
 
         _cts = new CancellationTokenSource();
         _ = DoContinuousWorkAsync(interval, onStateHasChanged, workFunctions, _cts.Token);
@@ -24,20 +17,27 @@ public class ComponentTaskRunner : IDisposable
         {
             try
             {
-                // 1. Loop through each work function and execute it in sequence.
-                foreach (var work in workFunctions)
+                // *** THE FIREWALL ***
+                // We now explicitly run all the user's work on a background thread pool thread.
+                // This guarantees that even a blocking call like Thread.Sleep() inside
+                // one of the workFunctions will not freeze the UI.
+                await Task.Run(async () =>
                 {
-                    if (token.IsCancellationRequested) break;
-                    await work();
-                }
+                    foreach (var work in workFunctions)
+                    {
+                        if (token.IsCancellationRequested) break;
+                        await work();
+                    }
+                }, token); // Pass the token to Task.Run as well.
 
-                // 2. After all work is done, execute the single UI update callback.
+
+                // After all the background work is done, we safely update the UI.
                 if (!token.IsCancellationRequested)
                 {
                     onStateHasChanged?.Invoke();
                 }
 
-                // 3. Wait for the next interval.
+                // Wait for the next interval.
                 await Task.Delay(interval, token);
             }
             catch (OperationCanceledException)
