@@ -1,74 +1,63 @@
-// AppState.cs - DO NOT DO THIS
-public class AppState
-{
-    private readonly ISnackbar _snackbar;
+@page "/polling-component"
+@implements IDisposable
 
-    // This constructor will cause a startup crash because a Singleton
-    // cannot depend on a Scoped service like ISnackbar.
-    public AppState(ISnackbar snackbar)
+<h3>Live Data Poller</h3>
+<p>This component continuously polls for new data in the background.</p>
+
+<p><strong>Status:</strong> @_message</p>
+
+@code {
+    private string _message = "Waiting for first poll...";
+
+    // The "off switch" for our background task
+    private CancellationTokenSource _cts = new CancellationTokenSource();
+
+    protected override void OnInitialized()
     {
-        _snackbar = snackbar;
+        // Fire-and-forget the long-running task.
+        // The `_` discards the returned Task, signaling we don't need to await it.
+        _ = DoContinuousWorkAsync();
     }
-}```
 
-### The Correct Solution: Using `IServiceProvider`
-
-To solve this, you inject the main `IServiceProvider` into your `AppState`. This provider acts as a service locator. When you need to show a snackbar, you can use it to create a temporary "scope" and safely request the `ISnackbar` service from that temporary scope.
-
-Here is the correct, step-by-step implementation.
-
-#### Step 1: Modify `AppState.cs` to use `IServiceProvider`
-
-Change your `AppState` constructor to accept `IServiceProvider` and use it to create a scope whenever you need to show a snackbar.
-
-```csharp
-// AppState.cs - The Correct Implementation
-using Microsoft.Extensions.DependencyInjection;
-using MudBlazor;
-using System;
-
-namespace WebApp.State
-{
-    public class AppState
+    private async Task DoContinuousWorkAsync()
     {
-        private readonly IServiceProvider _serviceProvider;
-
-        // Inject the main service provider. This is safe for a Singleton.
-        public AppState(IServiceProvider serviceProvider)
+        while (!_cts.Token.IsCancellationRequested)
         {
-            _serviceProvider = serviceProvider;
-        }
+            // Simulate fetching data from an external source
+            var data = await GetCurrentDataPoint();
 
-        // Example property that will trigger a notification
-        private string? _importantData;
-        public string? ImportantData
-        {
-            get => _importantData;
-            set
+            // InvokeAsync is CRITICAL for safely updating the UI from a different thread
+            await InvokeAsync(() =>
             {
-                _importantData = value;
-                // When the data changes, show a success snackbar
-                ShowSnackbarMessage($"Data was updated to: {value}", Severity.Success);
-                NotifyStateChanged();
+                _message = $"Last check at {DateTime.Now:T}. Current value: {data}";
+                StateHasChanged(); // Tell Blazor to update the display
+            });
+
+            try
+            {
+                // Wait for 5 seconds, but stop immediately if cancellation is requested
+                await Task.Delay(TimeSpan.FromSeconds(5), _cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // This is the expected result when Dispose() is called.
+                // The loop will exit cleanly.
+                break;
             }
         }
+    }
 
-        public event Action? OnChange;
-        private void NotifyStateChanged() => OnChange?.Invoke();
+    // This is just a placeholder for a real API call
+    private Task<int> GetCurrentDataPoint()
+    {
+        return Task.FromResult(new Random().Next(100));
+    }
 
-
-        // This is our helper method to safely show a snackbar
-        private void ShowSnackbarMessage(string message, Severity severity)
-        {
-            // Create a new, temporary scope from the service provider.
-            // This scope can safely provide Scoped services like ISnackbar.
-            using var scope = _serviceProvider.CreateScope();
-
-            // Resolve the ISnackbar service from the new scope
-            var snackbar = scope.ServiceProvider.GetRequiredService<ISnackbar>();
-
-            // Now use the snackbar service. It's safe.
-            snackbar.Add(message, severity);
-        }
+    // This method is called by the framework when the component is removed from the UI
+    public void Dispose()
+    {
+        // Send the cancellation signal to the background task
+        _cts.Cancel();
+        _cts.Dispose();
     }
 }
