@@ -54,3 +54,14 @@ public class ComponentTaskRunner : IDisposable
         _cts?.Dispose();
     }
 }
+
+
+
+
+
+
+TaskRunner.Start(
+            UpdateTheTime,
+            () => InvokeAsync(StateHasChanged), // This is the callback!
+            TimeSpan.FromSeconds(1)
+        );
