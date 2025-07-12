@@ -4,37 +4,40 @@ public class ComponentTaskRunner : IDisposable
 {
     private CancellationTokenSource? _cts;
 
-    // The Start method now takes an Action to be called after the work is done.
-    public void Start(Func<Task> work, Action onStateHasChanged, TimeSpan interval)
+    // THE KEY CHANGE IS HERE: `params Func<Task>[] workFunctions`
+    // The `params` array must be the last argument.
+    public void Start(TimeSpan interval, Action onStateHasChanged, params Func<Task>[] workFunctions)
     {
+        if (workFunctions == null || workFunctions.Length == 0)
+        {
+            // Do nothing if no work was provided.
+            return;
+        }
+
         _cts = new CancellationTokenSource();
-        _ = DoContinuousWorkAsync(work, onStateHasChanged, interval, _cts.Token);
+        _ = DoContinuousWorkAsync(interval, onStateHasChanged, workFunctions, _cts.Token);
     }
 
-    // Overload for synchronous work
-    public void Start(Action work, Action onStateHasChanged, TimeSpan interval)
-    {
-        Func<Task> asyncWork = () => {
-            work();
-            return Task.CompletedTask;
-        };
-        Start(asyncWork, onStateHasChanged, interval);
-    }
-
-    private async Task DoContinuousWorkAsync(Func<Task> work, Action onStateHasChanged, TimeSpan interval, CancellationToken token)
+    private async Task DoContinuousWorkAsync(TimeSpan interval, Action onStateHasChanged, Func<Task>[] workFunctions, CancellationToken token)
     {
         while (!token.IsCancellationRequested)
         {
             try
             {
-                // 1. Do the developer's work.
-                await work();
+                // 1. Loop through each work function and execute it in sequence.
+                foreach (var work in workFunctions)
+                {
+                    if (token.IsCancellationRequested) break;
+                    await work();
+                }
 
-                // 2. THE FIX: Execute the "permission slip" (the callback)
-                //    that the component gave us.
-                onStateHasChanged?.Invoke();
+                // 2. After all work is done, execute the single UI update callback.
+                if (!token.IsCancellationRequested)
+                {
+                    onStateHasChanged?.Invoke();
+                }
 
-                // 3. Wait for the interval.
+                // 3. Wait for the next interval.
                 await Task.Delay(interval, token);
             }
             catch (OperationCanceledException)
@@ -54,14 +57,3 @@ public class ComponentTaskRunner : IDisposable
         _cts?.Dispose();
     }
 }
-
-
-
-
-
-
-TaskRunner.Start(
-            UpdateTheTime,
-            () => InvokeAsync(StateHasChanged), // This is the callback!
-            TimeSpan.FromSeconds(1)
-        );
