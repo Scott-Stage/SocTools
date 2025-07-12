@@ -1,7 +1,11 @@
 // Services/ComponentTaskRunner.cs
+using System.Threading;
+
 public class ComponentTaskRunner : IDisposable
 {
     private CancellationTokenSource? _cts;
+    // The asynchronous lock. Initial count = 1, Max count = 1.
+    private readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
 
     public void Start(TimeSpan interval, Action onStateHasChanged, params Func<Task>[] workFunctions)
     {
@@ -15,12 +19,28 @@ public class ComponentTaskRunner : IDisposable
     {
         while (!token.IsCancellationRequested)
         {
+            // First, wait for the specified interval.
+            // This prevents an immediate run on startup before the first delay.
             try
             {
-                // *** THE FIREWALL ***
-                // We now explicitly run all the user's work on a background thread pool thread.
-                // This guarantees that even a blocking call like Thread.Sleep() inside
-                // one of the workFunctions will not freeze the UI.
+                await Task.Delay(interval, token);
+            }
+            catch (OperationCanceledException) { break; }
+
+            // Now, try to acquire the lock without waiting.
+            if (!await _lock.WaitAsync(0, token))
+            {
+                // If we couldn't get the lock, it means the previous task is still running.
+                // So, we skip this cycle and go back to waiting for the next interval.
+                Console.WriteLine($"[{DateTime.Now:T}] Skipping task run because the previous one is still active.");
+                continue;
+            }
+
+            try
+            {
+                // --- We have acquired the lock ---
+                // We are now certain that no other instance of this work is running.
+
                 await Task.Run(async () =>
                 {
                     foreach (var work in workFunctions)
@@ -28,25 +48,19 @@ public class ComponentTaskRunner : IDisposable
                         if (token.IsCancellationRequested) break;
                         await work();
                     }
-                }, token); // Pass the token to Task.Run as well.
+                }, token);
 
-
-                // After all the background work is done, we safely update the UI.
                 if (!token.IsCancellationRequested)
                 {
                     onStateHasChanged?.Invoke();
                 }
-
-                // Wait for the next interval.
-                await Task.Delay(interval, token);
             }
-            catch (OperationCanceledException)
+            finally
             {
-                break;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error in component background task: {ex.Message}");
+                // CRITICAL: Always release the lock in a finally block.
+                // This ensures that even if the work throws an exception,
+                // the lock is released, preventing a permanent deadlock.
+                _lock.Release();
             }
         }
     }
@@ -55,5 +69,6 @@ public class ComponentTaskRunner : IDisposable
     {
         _cts?.Cancel();
         _cts?.Dispose();
+        _lock?.Dispose();
     }
-}
+}```
