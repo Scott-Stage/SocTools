@@ -4,71 +4,84 @@ using System.Threading;
 public class ComponentTaskRunner : IDisposable
 {
     private CancellationTokenSource? _cts;
-    // The asynchronous lock. Initial count = 1, Max count = 1.
-    private readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
+    private SemaphoreSlim? _throttleLock;
+    private bool _isRunning = false;
 
-    public void Start(TimeSpan interval, Action onStateHasChanged, params Func<Task>[] workFunctions)
+    // The Start method is now guarded by the _isRunning flag.
+    public void Start(
+        TimeSpan interval,
+        Action onStateHasChanged,
+        int maxConcurrency,
+        params Func<Task>[] workFunctions)
     {
+        // Prevent starting if it's already running.
+        if (_isRunning) return;
+        
         if (workFunctions == null || workFunctions.Length == 0) return;
 
+        _isRunning = true;
+        int concurrency = Math.Max(1, maxConcurrency);
+        _throttleLock = new SemaphoreSlim(concurrency, concurrency);
         _cts = new CancellationTokenSource();
+        
+        // Start the background task.
         _ = DoContinuousWorkAsync(interval, onStateHasChanged, workFunctions, _cts.Token);
+    }
+
+    // The NEW public Stop method.
+    public void Stop()
+    {
+        if (!_isRunning) return;
+
+        // Signal the cancellation token to gracefully stop the loop.
+        _cts?.Cancel();
+        
+        _isRunning = false;
     }
 
     private async Task DoContinuousWorkAsync(TimeSpan interval, Action onStateHasChanged, Func<Task>[] workFunctions, CancellationToken token)
     {
+        // ... The internal loop logic remains exactly the same ...
         while (!token.IsCancellationRequested)
         {
-            // First, wait for the specified interval.
-            // This prevents an immediate run on startup before the first delay.
             try
             {
                 await Task.Delay(interval, token);
             }
             catch (OperationCanceledException) { break; }
 
-            // Now, try to acquire the lock without waiting.
-            if (!await _lock.WaitAsync(0, token))
-            {
-                // If we couldn't get the lock, it means the previous task is still running.
-                // So, we skip this cycle and go back to waiting for the next interval.
-                Console.WriteLine($"[{DateTime.Now:T}] Skipping task run because the previous one is still active.");
-                continue;
-            }
+            var tasksInThisRun = workFunctions.Select(work => ExecuteThrottledWorkAsync(work, token));
+            await Task.WhenAll(tasksInThisRun);
 
-            try
+            if (!token.IsCancellationRequested)
             {
-                // --- We have acquired the lock ---
-                // We are now certain that no other instance of this work is running.
-
-                await Task.Run(async () =>
-                {
-                    foreach (var work in workFunctions)
-                    {
-                        if (token.IsCancellationRequested) break;
-                        await work();
-                    }
-                }, token);
-
-                if (!token.IsCancellationRequested)
-                {
-                    onStateHasChanged?.Invoke();
-                }
-            }
-            finally
-            {
-                // CRITICAL: Always release the lock in a finally block.
-                // This ensures that even if the work throws an exception,
-                // the lock is released, preventing a permanent deadlock.
-                _lock.Release();
+                onStateHasChanged?.Invoke();
             }
         }
     }
 
+    private async Task ExecuteThrottledWorkAsync(Func<Task> work, CancellationToken token)
+    {
+        await _throttleLock!.WaitAsync(token);
+        try
+        {
+            await Task.Run(work, token);
+        }
+        finally
+        {
+            _throttleLock.Release();
+        }
+    }
+
+    // The Dispose method now acts as the final, ultimate cleanup.
     public void Dispose()
     {
-        _cts?.Cancel();
+        // Ensure the loop is stopped before we dispose the resources.
+        if (_isRunning)
+        {
+            Stop();
+        }
         _cts?.Dispose();
-        _lock?.Dispose();
+        _throttleLock?.Dispose();
     }
-}```
+}
