@@ -4,94 +4,90 @@ using System.Threading;
 
 public class ComponentTaskRunner : IDisposable
 {
-    // The KEY is the unique task name. The VALUE is its personal "off switch".
-    private readonly ConcurrentDictionary<string, CancellationTokenSource> _runningTasks = new();
+    // The dictionary now holds the complete state for each task.
+    private readonly ConcurrentDictionary<string, TaskState> _runningTasks = new();
 
-    // Start now takes a unique name for the task.
+    private record TaskState(CancellationTokenSource Cts, SemaphoreSlim Lock);
+
+    // Start needs the maxConcurrency parameter again.
     public void Start(
         string taskName,
         TimeSpan interval,
+        int maxConcurrency, // e.g., 1 for "skip if busy"
         Action onStateHasChanged,
         params Func<Task>[] workFunctions)
     {
-        // Try to add a new task. If the name already exists, do nothing.
-        // This makes the Start operation idempotent and safe to call multiple times.
-        if (!_runningTasks.TryAdd(taskName, new CancellationTokenSource()))
+        // Create the complete state package for the new task.
+        var newState = new TaskState(
+            new CancellationTokenSource(),
+            new SemaphoreSlim(maxConcurrency, maxConcurrency)
+        );
+
+        // If a task with this name isn't already running, add it.
+        if (!_runningTasks.TryAdd(taskName, newState))
         {
-            // A task with this name is already running.
+            // A task with this name already exists, so we don't start a new one.
+            // We also need to clean up the state we just created.
+            newState.Cts.Dispose();
+            newState.Lock.Dispose();
             return;
         }
 
-        var cts = _runningTasks[taskName];
-
-        // Start the independent loop for this specific task.
-        _ = DoContinuousWorkAsync(taskName, interval, onStateHasChanged, workFunctions, cts.Token);
+        _ = DoContinuousWorkAsync(taskName, interval, onStateHasChanged, workFunctions, newState);
     }
 
-    // Stop now takes the name of the task to stop.
     public void Stop(string taskName)
     {
-        // Try to remove the task from the dictionary. If successful, we get its CTS.
-        if (_runningTasks.TryRemove(taskName, out var cts))
+        if (_runningTasks.TryRemove(taskName, out var taskState))
         {
-            // Signal cancellation and dispose of the CTS for that specific task.
-            cts.Cancel();
-            cts.Dispose();
-        }
-    }
-    
-    // A helper to check the status of a specific task.
-    public bool IsRunning(string taskName)
-    {
-        return _runningTasks.ContainsKey(taskName);
-    }
-
-    // A convenience method to stop all managed tasks.
-    public void StopAll()
-    {
-        foreach (var taskName in _runningTasks.Keys)
-        {
-            Stop(taskName);
+            taskState.Cts.Cancel();
+            taskState.Cts.Dispose();
+            taskState.Lock.Dispose(); // Clean up the semaphore too.
         }
     }
 
-    private async Task DoContinuousWorkAsync(string taskName, TimeSpan interval, Action onStateHasChanged, Func<Task>[] workFunctions, CancellationToken token)
+    // ... IsRunning() and StopAll() methods remain the same ...
+
+    private async Task DoContinuousWorkAsync(string taskName, TimeSpan interval, Action onStateHasChanged, Func<Task>[] workFunctions, TaskState taskState)
     {
-        // This loop is now entirely independent for each task.
-        // NOTE: For this manager pattern, we remove the SemaphoreSlim to allow
-        // independent tasks to run truly concurrently. Each task is its own "job".
-        while (!token.IsCancellationRequested)
+        while (!taskState.Cts.IsCancellationRequested)
         {
-            try { await Task.Delay(interval, token); }
+            try { await Task.Delay(interval, taskState.Cts.Token); }
             catch (OperationCanceledException) { break; }
+
+            // Use the task's personal lock to control concurrency.
+            // A timeout of 0 means "skip if busy".
+            if (!await taskState.Lock.WaitAsync(0, taskState.Cts.Token))
+            {
+                Console.WriteLine($"Skipping tick for task '{taskName}' because it is already running.");
+                continue;
+            }
 
             try
             {
+                // We have acquired the lock for this specific task.
                 await Task.Run(async () =>
                 {
                     foreach (var work in workFunctions)
                     {
-                        if (token.IsCancellationRequested) break;
+                        if (taskState.Cts.IsCancellationRequested) break;
                         await work();
                     }
-                }, token);
+                }, taskState.Cts.Token);
 
-                if (!token.IsCancellationRequested)
+                if (!taskState.Cts.IsCancellationRequested)
                 {
                     onStateHasChanged?.Invoke();
                 }
             }
-            catch (OperationCanceledException) { break; }
-            catch (Exception ex)
+            finally
             {
-                Console.WriteLine($"Error in background task '{taskName}': {ex.Message}");
+                // Release this task's personal lock.
+                taskState.Lock.Release();
             }
         }
     }
-
-    // Dispose is the final safety net that stops everything.
-    public void Dispose()
-    {
-        StopAll();
-    }
+    
+    // ... other methods
+    public void Dispose() => StopAll();
 }
