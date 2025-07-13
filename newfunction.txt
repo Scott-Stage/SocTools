@@ -2,32 +2,27 @@
 using System.Collections.Concurrent;
 using System.Threading;
 
+// A private record to hold the full state for each managed task.
+file record TaskState(CancellationTokenSource Cts, SemaphoreSlim Lock);
+
 public class ComponentTaskRunner : IDisposable
 {
-    // The dictionary now holds the complete state for each task.
     private readonly ConcurrentDictionary<string, TaskState> _runningTasks = new();
 
-    private record TaskState(CancellationTokenSource Cts, SemaphoreSlim Lock);
-
-    // Start needs the maxConcurrency parameter again.
     public void Start(
         string taskName,
         TimeSpan interval,
-        int maxConcurrency, // e.g., 1 for "skip if busy"
+        int maxConcurrency, // e.g., 1 for "skip if busy", >1 for throttling
         Action onStateHasChanged,
         params Func<Task>[] workFunctions)
     {
-        // Create the complete state package for the new task.
         var newState = new TaskState(
             new CancellationTokenSource(),
-            new SemaphoreSlim(maxConcurrency, maxConcurrency)
+            new SemaphoreSlim(Math.Max(1, maxConcurrency))
         );
 
-        // If a task with this name isn't already running, add it.
         if (!_runningTasks.TryAdd(taskName, newState))
         {
-            // A task with this name already exists, so we don't start a new one.
-            // We also need to clean up the state we just created.
             newState.Cts.Dispose();
             newState.Lock.Dispose();
             return;
@@ -42,11 +37,27 @@ public class ComponentTaskRunner : IDisposable
         {
             taskState.Cts.Cancel();
             taskState.Cts.Dispose();
-            taskState.Lock.Dispose(); // Clean up the semaphore too.
+            taskState.Lock.Dispose();
         }
     }
 
-    // ... IsRunning() and StopAll() methods remain the same ...
+    // --- The Corrected StopAll Implementation ---
+    public void StopAll()
+    {
+        // Take a snapshot of the keys because the collection will be modified
+        // by the Stop() method during iteration.
+        var taskNames = _runningTasks.Keys.ToList();
+        
+        foreach (var taskName in taskNames)
+        {
+            Stop(taskName);
+        }
+    }
+
+    public bool IsRunning(string taskName)
+    {
+        return _runningTasks.ContainsKey(taskName);
+    }
 
     private async Task DoContinuousWorkAsync(string taskName, TimeSpan interval, Action onStateHasChanged, Func<Task>[] workFunctions, TaskState taskState)
     {
@@ -55,17 +66,16 @@ public class ComponentTaskRunner : IDisposable
             try { await Task.Delay(interval, taskState.Cts.Token); }
             catch (OperationCanceledException) { break; }
 
-            // Use the task's personal lock to control concurrency.
-            // A timeout of 0 means "skip if busy".
+            // Use a timeout of 0 on the semaphore to "skip if busy".
+            // To allow queueing, you would remove the timeout.
             if (!await taskState.Lock.WaitAsync(0, taskState.Cts.Token))
             {
-                Console.WriteLine($"Skipping tick for task '{taskName}' because it is already running.");
+                Console.WriteLine($"Skipping tick for task '{taskName}' because it is already at max concurrency.");
                 continue;
             }
 
             try
             {
-                // We have acquired the lock for this specific task.
                 await Task.Run(async () =>
                 {
                     foreach (var work in workFunctions)
@@ -80,14 +90,21 @@ public class ComponentTaskRunner : IDisposable
                     onStateHasChanged?.Invoke();
                 }
             }
+            catch (OperationCanceledException) { /* This is expected on stop */ }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in background task '{taskName}': {ex.Message}");
+            }
             finally
             {
-                // Release this task's personal lock.
                 taskState.Lock.Release();
             }
         }
     }
-    
-    // ... other methods
-    public void Dispose() => StopAll();
+
+    // --- The Dispose method correctly uses StopAll ---
+    public void Dispose()
+    {
+        StopAll();
+    }
 }
