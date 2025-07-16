@@ -1,39 +1,74 @@
-// MyBackgroundService.cs
-
-public class MyBackgroundService : BackgroundService
+Step 1: Create a Service and Interface
+Generated csharp
+// ISessionStateService.cs
+public interface ISessionStateService
 {
-    // 1. Inject the IServiceScopeFactory. This is safe because the factory itself is a Singleton.
-    private readonly IServiceScopeFactory _scopeFactory;
+    Task<string> GetStateAsync(string key);
+    Task SetStateAsync(string key, string value);
+}
 
-    public MyBackgroundService(IServiceScopeFactory scopeFactory)
+// SessionStateService.cs
+public class SessionStateService : ISessionStateService
+{
+    private readonly IJSRuntime _jsRuntime;
+
+    public SessionStateService(IJSRuntime jsRuntime)
     {
-        _scopeFactory = scopeFactory;
+        _jsRuntime = jsRuntime;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    public async Task<string> GetStateAsync(string key)
     {
-        // This loop runs for the entire application lifetime.
-        while (!stoppingToken.IsCancellationRequested)
+        // Assumes you created the JS file from Method 1
+        return await _jsRuntime.InvokeAsync<string>("getSessionStorage", key);
+    }
+
+    public async Task SetStateAsync(string key, string value)
+    {
+        await _jsRuntime.InvokeVoidAsync("setSessionStorage", key, value);
+    }
+}
+Use code with caution.
+C#
+Step 2: Register the Service
+In Program.cs, register your new service for dependency injection.
+Generated csharp
+// Program.cs
+...
+builder.Services.AddScoped<ISessionStateService, SessionStateService>();
+...
+Use code with caution.
+C#
+Step 3: Use the Service in Your Component
+Now your component code becomes much cleaner and doesn't directly depend on IJSRuntime.
+Generated razor
+@* Shared/MainLayout.razor (Refactored to use the service) *@
+@inherits LayoutComponentBase
+@inject ISessionStateService SessionState
+
+@* ... (The HTML part is exactly the same) ... *@
+@if (showWelcomeNotice) { ... }
+
+@code {
+    private bool showWelcomeNotice = false;
+    private const string visitedFlagKey = "hasVisitedSite";
+
+    protected override async Task OnInitializedAsync()
+    {
+        // We can use OnInitializedAsync here as we don't need to wait for rendering
+        var hasVisited = await SessionState.GetStateAsync(visitedFlagKey);
+
+        if (string.IsNullOrEmpty(hasVisited))
         {
-            // --- This is the key part of the pattern ---
+            showWelcomeNotice = true;
+            // No need for StateHasChanged() in OnInitializedAsync
             
-            // 2. For each unit of work, create a new, temporary DI scope.
-            using (var scope = _scopeFactory.CreateScope())
-            {
-                // 3. Resolve your Scoped services from THIS temporary scope.
-                // You are essentially creating a temporary "user session" for the background task.
-                var appState = scope.ServiceProvider.GetRequiredService<AppState>();
-                var taskRunner = scope.ServiceProvider.GetRequiredService<ComponentTaskRunner>();
-
-                // 4. Now you can safely use these Scoped services inside this 'using' block.
-                Console.WriteLine($"Background service checking status. Current AppState counter is {appState.Counter}");
-                
-                // You cannot hold onto the 'taskRunner' or 'appState' instances outside this block.
-            }
-            // The scope and all its services are automatically disposed of here.
-
-            // 5. Wait before the next iteration.
-            await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+            await SessionState.SetStateAsync(visitedFlagKey, "true");
         }
+    }
+
+    private void DismissNotice()
+    {
+        showWelcomeNotice = false;
     }
 }
