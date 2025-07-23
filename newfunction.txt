@@ -1,24 +1,51 @@
-// wwwroot/js/sessionStorageInterop.js
+using Microsoft.JSInterop;
+using System.Text.Json;
 
-// This function is correct and needs no changes.
-window.saveToSessionStorage = (key, value) => {
-    try {
-        const jsonValue = JSON.stringify(value);
-        sessionStorage.setItem(key, jsonValue);
-    } catch (e) {
-        console.error("Failed to save to session storage", e);
-    }
-};
+public class SessionStorageService : ISessionStorageService
+{
+    private readonly IJSRuntime _jsRuntime;
 
-// CORRECTED VERSION of readFromSessionStorage
-// We remove JSON.parse. The function now just returns the raw string.
-window.readFromSessionStorage = (key) => {
-    try {
-        // Just get the raw string value from session storage.
-        // Let the C# code handle the parsing.
-        return sessionStorage.getItem(key);
-    } catch (e) {
-        console.error("Failed to read from session storage", e);
-        return null;
+    public SessionStorageService(IJSRuntime jsRuntime)
+    {
+        _jsRuntime = jsRuntime;
     }
-};
+
+    public async Task<T?> GetItemAsync<T>(string key)
+    {
+        var jsonValue = await _jsRuntime.InvokeAsync<string?>("readFromSessionStorage", key);
+
+        if (jsonValue is null)
+        {
+            return default;
+        }
+
+        try
+        {
+            // The original logic is correct, but we wrap it to catch errors.
+            return JsonSerializer.Deserialize<T>(jsonValue);
+        }
+        catch (JsonException ex)
+        {
+            // THIS IS THE CRUCIAL PART FOR DEBUGGING
+            // If deserialization fails, we log the raw value that caused the problem.
+            Console.WriteLine($"Error deserializing session storage item. Key: '{key}'. Raw Value: '{jsonValue}'. Error: {ex.Message}");
+            
+            // Return default or throw a more specific exception if you prefer
+            return default;
+        }
+    }
+
+    public async Task SetItemAsync<T>(string key, T value)
+    {
+        await _jsRuntime.InvokeVoidAsync("saveToSessionStorage", key, value);
+    }
+}```
+
+This change won't fix the underlying data issue, but it will give you a crystal-clear error message in the browser's developer console (under "Console") telling you *exactly* what malformed data it tried to parse.
+
+### Summary of the Golden Rules
+
+1.  **Always `JSON.stringify` in JavaScript** before writing to storage.
+2.  **Always `JsonSerializer.Deserialize` in C#** when reading from storage.
+3.  **The data physically stored in `sessionStorage` must always be a valid JSON string.**
+4.  **When in doubt, clear the browser cache and application storage.** It solves a surprising number of web development problems.
