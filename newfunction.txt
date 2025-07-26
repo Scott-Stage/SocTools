@@ -1,103 +1,51 @@
-@code {
-    private bool _isLoading = true;
-    private CipherSuiteInfo? _selectedItem;
-    private List<CipherSuiteInfo> _cipherSuiteList = new();
+@page "/ciphersuites"
+@using System.Text.Json
+@inject HttpClient Http
 
-    // This variable is bound to the text field and updates as the user types.
-    private string _searchTermsInput = "";
+<PageTitle>Cipher Suites</PageTitle>
 
-    // MODIFICATION 1: This new variable holds the terms that are actually used for filtering.
-    // It is only updated when the user presses Enter.
-    private string _appliedFilterTerms = "";
+<MudText Typo="Typo.h4" GutterBottom="true">TLS/SSL Cipher Suites</MudText>
 
-    protected override async Task OnInitializedAsync()
-    {
-        await LoadCipherSuites();
-    }
+<MudTable Items="@_cipherSuiteList"
+          Hover="true"
+          Striped="true"
+          Dense="true"
+          IsLoading="_isLoading"
+          Filter="new Func<CipherSuiteInfo, bool>(MultiFilterFunc)"
+          @bind-SelectedItem="_selectedItem">
 
-    private async Task LoadCipherSuites()
-    {
-        // ... (This method remains unchanged from the previous version)
-        _isLoading = true;
-        try
-        {
-            const string apiUrl = "https://ciphersuite.info/api/cs";
-            var apiResponse = await Http.GetFromJsonAsync<CipherSuiteApiResponse>(apiUrl);
-
-            if (apiResponse?.CipherSuites != null)
-            {
-                _cipherSuiteList = apiResponse.CipherSuites
-                    .SelectMany(dict => dict)
-                    .Select(kvp => new CipherSuiteInfo
-                    {
-                        Name = kvp.Key,
-                        Security = kvp.Value.Security,
-                        KexAlgorithm = kvp.Value.KexAlgorithm,
-                        AuthAlgorithm = kvp.Value.AuthAlgorithm,
-                        EncAlgorithm = kvp.Value.EncAlgorithm,
-                        HashAlgorithm = kvp.Value.HashAlgorithm,
-                        TlsVersions = string.Join(", ", kvp.Value.TlsVersion)
-                    })
-                    .OrderBy(c => c.Name)
-                    .ToList();
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error fetching or processing cipher suites: {ex.Message}");
-        }
-        finally
-        {
-            _isLoading = false;
-        }
-    }
-
-    // MODIFICATION 2: Add the keyboard event handler
-    /// <summary>
-    /// This method is called on every key press in the text field.
-    /// It checks if the key is "Enter" and, if so, applies the filter.
-    /// </summary>
-    private async Task HandleKeyUp(KeyboardEventArgs e)
-    {
-        if (e.Key == "Enter")
-        {
-            // Apply the filter by copying the current input to the applied filter variable
-            _appliedFilterTerms = _searchTermsInput;
-            
-            // Note: We don't need to call StateHasChanged() here because MudTable's
-            // internal state will be refreshed by the new filter application.
-            // If this were a plain component, a manual StateHasChanged() might be needed.
-        }
-    }
-
-    // MODIFICATION 3: The filter function now uses the `_appliedFilterTerms` variable
-    private bool MultiFilterFunc(CipherSuiteInfo element)
-    {
-        if (string.IsNullOrWhiteSpace(_appliedFilterTerms))
-        {
-            return true;
-        }
-
-        var searchTerms = new HashSet<string>(
-            _appliedFilterTerms.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
-                               .Select(line => line.Trim()),
-            StringComparer.OrdinalIgnoreCase
-        );
-
-        if (!searchTerms.Any())
-        {
-            return true;
-        }
-
-        return searchTerms.Contains(element.Name);
-    }
-
-    private Color GetSecurityColor(string security) => security.ToLower() switch
-    {
-        "recommended" => Color.Success,
-        "secure" => Color.Info,
-        "weak" => Color.Warning,
-        "insecure" => Color.Error,
-        _ => Color.Default
-    };
-}
+    <ToolBarContent>
+        <MudText Typo="Typo.h6">Available Cipher Suites</MudText>
+        <MudSpacer />
+        @* MODIFICATION 4: Add the @onkeyup event handler *@
+        <MudTextField @bind-Value="_searchTermsInput"
+                      @onkeyup="HandleKeyUp"
+                      Placeholder="Paste cipher names, then press Enter to filter..."
+                      Lines="5"
+                      Variant="Variant.Outlined"
+                      Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search"
+                      IconSize="Size.Medium"
+                      Class="mt-0"
+                      Style="width: 50%;" />
+    </ToolBarContent>
+    <HeaderContent>
+        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.Name)">Name</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.Security)">Security</M/udTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.KexAlgorithm)">Key Exchange</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.EncAlgorithm)">Encryption</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.TlsVersions)">TLS Versions</MudTableSortLabel></MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Name">@context.Name</MudTd>
+        <MudTd DataLabel="Security">
+            <MudChip Label="true" Color="@GetSecurityColor(context.Security)" Size="Size.Small">@context.Security</MudChip>
+        </MudTd>
+        <MudTd DataLabel="Key Exchange">@context.KexAlgorithm</MudTd>
+        <MudTd DataLabel="Encryption">@context.EncAlgorithm</MudTd>
+        <MudTd DataLabel="TLS Versions">@context.TlsVersions</MudTd>
+    </RowTemplate>
+    <PagerContent>
+        <MudTablePager />
+    </PagerContent>
+</MudTable>
