@@ -1,89 +1,259 @@
-function ConvertTo-JsonFromXmlSTJ($XMLData)
+Of course. Here is a complete guide and the code required to call the ciphersuite.info API, ingest the data, and display it in a MudBlazor table.
+
+The main challenge with this API's data structure is that the cipher suite's name is a key within the JSON, not a property. The correct approach is to deserialize this into a dictionary and then transform that data into a simple, flat list that is easy for the MudTable to consume.
+
+Here is a step-by-step solution.
+
+Step 1: Define C# Models for Deserialization
+
+You need C# classes that match the structure of the incoming JSON. You also need a "flattened" class that will be used to feed the MudBlazor table.
+
+Create a new file in your project, for example, CipherSuiteModels.cs, and add the following code:
+
+Generated csharp
+using System.Text.Json.Serialization;
+using System.Collections.Generic;
+
+/// <summary>
+/// This class represents the top-level object of the API response.
+/// </summary>
+public class CipherSuiteApiResponse
 {
-    $xmldoc = [System.Xml.XmlDocument]::new()
-    $xmldoc.LoadXml((Remove-UnknownCharactersFromXML -String $XMLData))
-
-    # Convert XML to a Hashtable (or PSCustomObject for more complex scenarios)
-    $jsonObject = ConvertFrom-XmlToHashtable -XmlNode $xmldoc
-
-    # Serialize the Hashtable to JSON using System.Text.Json
-    $jsonString = [System.Text.Json.JsonSerializer]::Serialize($jsonObject, [System.Text.Json.JsonSerializerOptions]::new() {WriteIndented = $true})
-
-    # Remove the "@" character from attributes (similar to the original function)
-    return ([Regex]::Replace($jsonString, '"@', '"', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase))
-
+    [JsonPropertyName("ciphersuites")]
+    public List<Dictionary<string, CipherSuiteDetails>>? CipherSuites { get; set; }
 }
 
-function ConvertFrom-XmlToHashtable {
-    param(
-        [Parameter(Mandatory=$true)]
-        [System.Xml.XmlNode]$XmlNode
-    )
+/// <summary>
+/// This class holds the detailed properties for a single cipher suite.
+/// </summary>
+public class CipherSuiteDetails
+{
+    [JsonPropertyName("gnutls_name")]
+    public string GnutlsName { get; set; } = "";
 
-    if ($XmlNode.HasChildNodes -and ($XmlNode.ChildNodes.Count -gt 1 -or ($XmlNode.ChildNodes[0].NodeType -ne "Text" -and $XmlNode.ChildNodes[0].NodeType -ne "CDATA"))) {
-        $jsonObject = @{}
+    [JsonPropertyName("openssl_name")]
+    public string OpensslName { get; set; } = "";
 
-        # Process Attributes
-        if ($XmlNode.Attributes) {
-            foreach ($attribute in $XmlNode.Attributes) {
-                $jsonObject."@$($attribute.Name)" = $attribute.Value
+    [JsonPropertyName("hex_byte_1")]
+    public string HexByte1 { get; set; } = "";
+
+    [JsonPropertyName("hex_byte_2")]
+    public string HexByte2 { get; set; } = "";
+
+    [JsonPropertyName("protocol_version")]
+    public string ProtocolVersion { get; set; } = "";
+
+    [JsonPropertyName("kex_algorithm")]
+    public string KexAlgorithm { get; set; } = "";
+
+    [JsonPropertyName("auth_algorithm")]
+    public string AuthAlgorithm { get; set; } = "";
+
+    [JsonPropertyName("enc_algorithm")]
+    public string EncAlgorithm { get; set; } = "";
+
+    [JsonPropertyName("hash_algorithm")]
+    public string HashAlgorithm { get; set; } = "";
+
+    [JsonPropertyName("security")]
+    public string Security { get; set; } = "";
+
+    [JsonPropertyName("tls_version")]
+    public List<string> TlsVersion { get; set; } = new();
+}
+
+/// <summary>
+/// A flattened, table-friendly class to hold the processed data for the MudTable.
+/// </summary>
+public class CipherSuiteInfo
+{
+    public string Name { get; set; } = "";
+    public string Security { get; set; } = "";
+    public string KexAlgorithm { get; set; } = "";
+    public string AuthAlgorithm { get; set; } = "";
+    public string EncAlgorithm { get; set; } = "";
+    public string HashAlgorithm { get; set; } = "";
+    public string TlsVersions { get; set; } = ""; // TLS versions will be a joined string
+}
+
+Step 2: Create the Blazor Component with the MudTable
+
+Now, create a Blazor component to fetch, process, and display the data. This code can be placed in a Razor page or component (e.g., CipherSuitesPage.razor).
+
+You must have HttpClient registered for dependency injection in your Program.cs file.
+
+For Blazor Server or WebAssembly:
+
+Generated csharp
+// In Program.cs
+builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
+IGNORE_WHEN_COPYING_START
+content_copy
+download
+Use code with caution.
+C#
+IGNORE_WHEN_COPYING_END
+
+Here is the component code:
+
+Generated html
+@page "/ciphersuites"
+@using System.Text.Json
+@inject HttpClient Http
+
+<PageTitle>Cipher Suites</PageTitle>
+
+<MudText Typo="Typo.h4" GutterBottom="true">TLS/SSL Cipher Suites</MudText>
+
+<MudTable Items="@_cipherSuiteList"
+          Hover="true"
+          Striped="true"
+          Dense="true"
+          IsLoading="_isLoading"
+          Filter="new Func<CipherSuiteInfo, bool>(FilterFunc)"
+          @bind-SelectedItem="_selectedItem">
+
+    <ToolBarContent>
+        <MudText Typo="Typo.h6">Available Cipher Suites</MudText>
+        <MudSpacer />
+        <MudTextField @bind-Value="_searchString" Placeholder="Search" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" IconSize="Size.Medium" Class="mt-0"></MudTextField>
+    </ToolBarContent>
+    <HeaderContent>
+        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.Name)">Name</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.Security)">Security</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.KexAlgorithm)">Key Exchange</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.EncAlgorithm)">Encryption</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.TlsVersions)">TLS Versions</MudTableSortLabel></MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Name">@context.Name</MudTd>
+        <MudTd DataLabel="Security">
+            <MudChip Label="true" Color="@GetSecurityColor(context.Security)" Size="Size.Small">@context.Security</MudChip>
+        </MudTd>
+        <MudTd DataLabel="Key Exchange">@context.KexAlgorithm</MudTd>
+        <MudTd DataLabel="Encryption">@context.EncAlgorithm</MudTd>
+        <MudTd DataLabel="TLS Versions">@context.TlsVersions</MudTd>
+    </RowTemplate>
+    <PagerContent>
+        <MudTablePager />
+    </PagerContent>
+</MudTable>
+
+
+@code {
+    private bool _isLoading = true;
+    private string _searchString = "";
+    private CipherSuiteInfo? _selectedItem;
+    private List<CipherSuiteInfo> _cipherSuiteList = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCipherSuites();
+    }
+
+    private async Task LoadCipherSuites()
+    {
+        _isLoading = true;
+        try
+        {
+            // The API URL to call
+            const string apiUrl = "https://ciphersuite.info/api/cs";
+            
+            // Make the API call
+            var apiResponse = await Http.GetFromJsonAsync<CipherSuiteApiResponse>(apiUrl);
+
+            // Process the response into a flat, enumerable list for the table
+            if (apiResponse?.CipherSuites != null)
+            {
+                _cipherSuiteList = apiResponse.CipherSuites
+                    .SelectMany(dict => dict) // Flattens the List<Dictionary<...>> into a single IEnumerable of KeyValuePairs
+                    .Select(kvp => new CipherSuiteInfo // Project each KeyValuePair into our flat model
+                    {
+                        Name = kvp.Key,
+                        Security = kvp.Value.Security,
+                        KexAlgorithm = kvp.Value.KexAlgorithm,
+                        AuthAlgorithm = kvp.Value.AuthAlgorithm,
+                        EncAlgorithm = kvp.Value.EncAlgorithm,
+                        HashAlgorithm = kvp.Value.HashAlgorithm,
+                        TlsVersions = string.Join(", ", kvp.Value.TlsVersion)
+                    })
+                    .OrderBy(c => c.Name) // Sort alphabetically by name
+                    .ToList();
             }
         }
-
-        # Process Child Nodes
-        foreach ($childNode in $XmlNode.ChildNodes) {
-            if ($childNode.NodeType -eq "Element") {
-                $childName = $childNode.Name
-                $childValue = ConvertFrom-XmlToHashtable -XmlNode $childNode
-
-                if ($jsonObject.ContainsKey($childName)) {
-                    # Handle multiple elements with the same name as an array
-                    if ($jsonObject.$childName -isnot [System.Array]) {
-                        $jsonObject.$childName = @($jsonObject.$childName)
-                    }
-                    $jsonObject.$childName += $childValue
-                } else {
-                    $jsonObject.$childName = $childValue
-                }
-            } elseif ($childNode.NodeType -eq "Text" -or $childNode.NodeType -eq "CDATA") {
-                # If it's just text content and the parent has no attributes and only one text child, return just the text.
-                if (!$XmlNode.Attributes -and $XmlNode.ChildNodes.Count -eq 1) {
-                    return $childNode.InnerText.Trim()
-                } else { # Otherwise, treat it as #text node (similar to Newtonsoft in some scenarios, though STJ is more flexible)
-                    if ($jsonObject.ContainsKey("#text")) {
-                        if ($jsonObject."#text" -isnot [System.Array]) {
-                            $jsonObject."#text" = @($jsonObject."#text")
-                        }
-                        $jsonObject."#text" += $childNode.InnerText.Trim()
-                    } else {
-                        $jsonObject."#text" = $childNode.InnerText.Trim()
-                    }
-                }
-            }
+        catch (Exception ex)
+        {
+            // In a real app, you would log this error and show a user-friendly message
+            Console.WriteLine($"Error fetching or processing cipher suites: {ex.Message}");
         }
-        return $jsonObject
-    } elseif ($XmlNode.NodeType -eq "Element" -and !$XmlNode.HasChildNodes -and $XmlNode.Attributes) {
-        # Element with only attributes and no child nodes
-        $jsonObject = @{}
-        foreach ($attribute in $XmlNode.Attributes) {
-            $jsonObject."@$($attribute.Name)" = $attribute.Value
+        finally
+        {
+            _isLoading = false;
         }
-        return $jsonObject
-
     }
-    else {
-        # Text node or empty element
-        return $XmlNode.InnerText.Trim()
+
+    /// <summary>
+    /// Provides filtering logic for the table's search box.
+    /// </summary>
+    private bool FilterFunc(CipherSuiteInfo element)
+    {
+        if (string.IsNullOrWhiteSpace(_searchString))
+            return true;
+        if (element.Name.Contains(_searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (element.Security.Contains(_searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (element.EncAlgorithm.Contains(_searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        return false;
     }
+    
+    /// <summary>
+    /// Returns a MudBlazor Color based on the security level for styling.
+    /// </summary>
+    private Color GetSecurityColor(string security) => security.ToLower() switch
+    {
+        "recommended" => Color.Success,
+        "secure" => Color.Info,
+        "weak" => Color.Warning,
+        "insecure" => Color.Error,
+        _ => Color.Default
+    };
 }
+IGNORE_WHEN_COPYING_START
+content_copy
+download
+Use code with caution.
+Html
+IGNORE_WHEN_COPYING_END
+Explanation of the Code
 
+Data Fetching (LoadCipherSuites):
 
-# Example Usage (assuming you have Remove-UnknownCharactersFromXML defined or can remove the call for testing):
-# Function to remove unknown characters (you might have your own implementation, this is a basic example)
-function Remove-UnknownCharactersFromXML {
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$String
-    )
-    return $String # In a real scenario, you'd implement character removal logic here.
-}
+The OnInitializedAsync lifecycle method calls LoadCipherSuites to fetch the data when the component loads.
+
+Http.GetFromJsonAsync<CipherSuiteApiResponse>(apiUrl) handles both fetching the data and the initial deserialization into our CipherSuiteApiResponse model.
+
+Data Transformation (LINQ):
+
+This is the most important part. We use a LINQ query to transform the complex, nested API data into a simple List<CipherSuiteInfo>.
+
+.SelectMany(dict => dict): This crucial step takes the List<Dictionary<string, CipherSuiteDetails>> and flattens it into a single sequence (IEnumerable) of KeyValuePair<string, CipherSuiteDetails>.
+
+.Select(kvp => new CipherSuiteInfo { ... }): This projects each key-value pair into our simple CipherSuiteInfo object. The kvp.Key is the cipher suite name, and kvp.Value contains all its details.
+
+string.Join(", ", kvp.Value.TlsVersion): This converts the list of supported TLS versions into a single, readable string for display.
+
+MudBlazor Table:
+
+Items="@_cipherSuiteList": The table is bound to our processed list.
+
+IsLoading="_isLoading": Shows a loading animation while the data is being fetched.
+
+Filter: Connects the search text field to the table's filtering logic. The FilterFunc checks if the search string appears in the name, security level, or encryption algorithm.
+
+MudTableSortLabel: This component is added to the headers to make the columns sortable.
+
+RowTemplate: The @context variable represents one CipherSuiteInfo object, allowing you to easily access its properties (e.g., @context.Name).
+
+GetSecurityColor: This is a helper function that returns a MudBlazor.Color enum to visually style the "Security" chip, making the table more intuitive.
