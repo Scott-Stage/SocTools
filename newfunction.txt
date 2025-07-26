@@ -1,53 +1,14 @@
-<MudTable Items="@_cipherSuiteList"
-          Hover="true"
-          Striped="true"
-          Dense="true"
-          IsLoading="_isLoading"
-          Filter="new Func<CipherSuiteInfo, bool>(MultiFilterFunc)"
-          @bind-SelectedItem="_selectedItem">
-
-    <ToolBarContent>
-        <MudText Typo="Typo.h6">Available Cipher Suites</MudText>
-        <MudSpacer />
-        @* MODIFICATION 1: Changed to a multi-line text field *@
-        <MudTextField @bind-Value="_searchTermsInput"
-                      Placeholder="Paste one or more cipher names, separated by new lines..."
-                      Lines="5"
-                      Variant="Variant.Outlined"
-                      Adornment="Adornment.Start"
-                      AdornmentIcon="@Icons.Material.Filled.Search"
-                      IconSize="Size.Medium"
-                      Class="mt-0" 
-                      Style="width: 50%;" />
-    </ToolBarContent>
-    <HeaderContent>
-        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.Name)">Name</MudTableSortLabel></MudTh>
-        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.Security)">Security</MudTableSortLabel></MudTh>
-        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.KexAlgorithm)">Key Exchange</MudTableSortLabel></MudTh>
-        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.EncAlgorithm)">Encryption</MudTableSortLabel></MudTh>
-        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.TlsVersions)">TLS Versions</MudTableSortLabel></MudTh>
-    </HeaderContent>
-    <RowTemplate>
-        <MudTd DataLabel="Name">@context.Name</MudTd>
-        <MudTd DataLabel="Security">
-            <MudChip Label="true" Color="@GetSecurityColor(context.Security)" Size="Size.Small">@context.Security</MudChip>
-        </MudTd>
-        <MudTd DataLabel="Key Exchange">@context.KexAlgorithm</MudTd>
-        <MudTd DataLabel="Encryption">@context.EncAlgorithm</MudTd>
-        <MudTd DataLabel="TLS Versions">@context.TlsVersions</MudTd>
-    </RowTemplate>
-    <PagerContent>
-        <MudTablePager />
-    </PagerContent>
-</MudTable>
-
 @code {
     private bool _isLoading = true;
     private CipherSuiteInfo? _selectedItem;
     private List<CipherSuiteInfo> _cipherSuiteList = new();
 
-    // MODIFICATION 2: Renamed the bound variable for clarity
+    // This variable is bound to the text field and updates as the user types.
     private string _searchTermsInput = "";
+
+    // MODIFICATION 1: This new variable holds the terms that are actually used for filtering.
+    // It is only updated when the user presses Enter.
+    private string _appliedFilterTerms = "";
 
     protected override async Task OnInitializedAsync()
     {
@@ -56,6 +17,7 @@
 
     private async Task LoadCipherSuites()
     {
+        // ... (This method remains unchanged from the previous version)
         _isLoading = true;
         try
         {
@@ -90,33 +52,43 @@
         }
     }
 
-    // MODIFICATION 3: New filtering function for multiple, exact matches
+    // MODIFICATION 2: Add the keyboard event handler
+    /// <summary>
+    /// This method is called on every key press in the text field.
+    /// It checks if the key is "Enter" and, if so, applies the filter.
+    /// </summary>
+    private async Task HandleKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            // Apply the filter by copying the current input to the applied filter variable
+            _appliedFilterTerms = _searchTermsInput;
+            
+            // Note: We don't need to call StateHasChanged() here because MudTable's
+            // internal state will be refreshed by the new filter application.
+            // If this were a plain component, a manual StateHasChanged() might be needed.
+        }
+    }
+
+    // MODIFICATION 3: The filter function now uses the `_appliedFilterTerms` variable
     private bool MultiFilterFunc(CipherSuiteInfo element)
     {
-        // If the input box is empty or just whitespace, show all rows.
-        if (string.IsNullOrWhiteSpace(_searchTermsInput))
+        if (string.IsNullOrWhiteSpace(_appliedFilterTerms))
         {
             return true;
         }
 
-        // Split the input text into individual lines, trim whitespace from each,
-        // and remove any empty lines that might result from the split.
-        // We use a HashSet for extremely fast lookups (O(1) average), which is
-        // much more efficient than searching a List (O(n)) repeatedly.
-        // StringComparer.OrdinalIgnoreCase ensures that the matching is not case-sensitive.
         var searchTerms = new HashSet<string>(
-            _searchTermsInput.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
-                             .Select(line => line.Trim()),
+            _appliedFilterTerms.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+                               .Select(line => line.Trim()),
             StringComparer.OrdinalIgnoreCase
         );
 
-        // If the processed set of terms is empty, there's nothing to filter by, so show all rows.
         if (!searchTerms.Any())
         {
             return true;
         }
 
-        // Return true (show the row) if the element's name is present in our set of search terms.
         return searchTerms.Contains(element.Name);
     }
 
