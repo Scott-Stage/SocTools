@@ -1,122 +1,24 @@
-Of course. Here is a complete guide and the code required to call the ciphersuite.info API, ingest the data, and display it in a MudBlazor table.
-
-The main challenge with this API's data structure is that the cipher suite's name is a key within the JSON, not a property. The correct approach is to deserialize this into a dictionary and then transform that data into a simple, flat list that is easy for the MudTable to consume.
-
-Here is a step-by-step solution.
-
-Step 1: Define C# Models for Deserialization
-
-You need C# classes that match the structure of the incoming JSON. You also need a "flattened" class that will be used to feed the MudBlazor table.
-
-Create a new file in your project, for example, CipherSuiteModels.cs, and add the following code:
-
-Generated csharp
-using System.Text.Json.Serialization;
-using System.Collections.Generic;
-
-/// <summary>
-/// This class represents the top-level object of the API response.
-/// </summary>
-public class CipherSuiteApiResponse
-{
-    [JsonPropertyName("ciphersuites")]
-    public List<Dictionary<string, CipherSuiteDetails>>? CipherSuites { get; set; }
-}
-
-/// <summary>
-/// This class holds the detailed properties for a single cipher suite.
-/// </summary>
-public class CipherSuiteDetails
-{
-    [JsonPropertyName("gnutls_name")]
-    public string GnutlsName { get; set; } = "";
-
-    [JsonPropertyName("openssl_name")]
-    public string OpensslName { get; set; } = "";
-
-    [JsonPropertyName("hex_byte_1")]
-    public string HexByte1 { get; set; } = "";
-
-    [JsonPropertyName("hex_byte_2")]
-    public string HexByte2 { get; set; } = "";
-
-    [JsonPropertyName("protocol_version")]
-    public string ProtocolVersion { get; set; } = "";
-
-    [JsonPropertyName("kex_algorithm")]
-    public string KexAlgorithm { get; set; } = "";
-
-    [JsonPropertyName("auth_algorithm")]
-    public string AuthAlgorithm { get; set; } = "";
-
-    [JsonPropertyName("enc_algorithm")]
-    public string EncAlgorithm { get; set; } = "";
-
-    [JsonPropertyName("hash_algorithm")]
-    public string HashAlgorithm { get; set; } = "";
-
-    [JsonPropertyName("security")]
-    public string Security { get; set; } = "";
-
-    [JsonPropertyName("tls_version")]
-    public List<string> TlsVersion { get; set; } = new();
-}
-
-/// <summary>
-/// A flattened, table-friendly class to hold the processed data for the MudTable.
-/// </summary>
-public class CipherSuiteInfo
-{
-    public string Name { get; set; } = "";
-    public string Security { get; set; } = "";
-    public string KexAlgorithm { get; set; } = "";
-    public string AuthAlgorithm { get; set; } = "";
-    public string EncAlgorithm { get; set; } = "";
-    public string HashAlgorithm { get; set; } = "";
-    public string TlsVersions { get; set; } = ""; // TLS versions will be a joined string
-}
-
-Step 2: Create the Blazor Component with the MudTable
-
-Now, create a Blazor component to fetch, process, and display the data. This code can be placed in a Razor page or component (e.g., CipherSuitesPage.razor).
-
-You must have HttpClient registered for dependency injection in your Program.cs file.
-
-For Blazor Server or WebAssembly:
-
-Generated csharp
-// In Program.cs
-builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
-IGNORE_WHEN_COPYING_START
-content_copy
-download
-Use code with caution.
-C#
-IGNORE_WHEN_COPYING_END
-
-Here is the component code:
-
-Generated html
-@page "/ciphersuites"
-@using System.Text.Json
-@inject HttpClient Http
-
-<PageTitle>Cipher Suites</PageTitle>
-
-<MudText Typo="Typo.h4" GutterBottom="true">TLS/SSL Cipher Suites</MudText>
-
 <MudTable Items="@_cipherSuiteList"
           Hover="true"
           Striped="true"
           Dense="true"
           IsLoading="_isLoading"
-          Filter="new Func<CipherSuiteInfo, bool>(FilterFunc)"
+          Filter="new Func<CipherSuiteInfo, bool>(MultiFilterFunc)"
           @bind-SelectedItem="_selectedItem">
 
     <ToolBarContent>
         <MudText Typo="Typo.h6">Available Cipher Suites</MudText>
         <MudSpacer />
-        <MudTextField @bind-Value="_searchString" Placeholder="Search" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" IconSize="Size.Medium" Class="mt-0"></MudTextField>
+        @* MODIFICATION 1: Changed to a multi-line text field *@
+        <MudTextField @bind-Value="_searchTermsInput"
+                      Placeholder="Paste one or more cipher names, separated by new lines..."
+                      Lines="5"
+                      Variant="Variant.Outlined"
+                      Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search"
+                      IconSize="Size.Medium"
+                      Class="mt-0" 
+                      Style="width: 50%;" />
     </ToolBarContent>
     <HeaderContent>
         <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.Name)">Name</MudTableSortLabel></MudTh>
@@ -139,12 +41,13 @@ Generated html
     </PagerContent>
 </MudTable>
 
-
 @code {
     private bool _isLoading = true;
-    private string _searchString = "";
     private CipherSuiteInfo? _selectedItem;
     private List<CipherSuiteInfo> _cipherSuiteList = new();
+
+    // MODIFICATION 2: Renamed the bound variable for clarity
+    private string _searchTermsInput = "";
 
     protected override async Task OnInitializedAsync()
     {
@@ -156,18 +59,14 @@ Generated html
         _isLoading = true;
         try
         {
-            // The API URL to call
             const string apiUrl = "https://ciphersuite.info/api/cs";
-            
-            // Make the API call
             var apiResponse = await Http.GetFromJsonAsync<CipherSuiteApiResponse>(apiUrl);
 
-            // Process the response into a flat, enumerable list for the table
             if (apiResponse?.CipherSuites != null)
             {
                 _cipherSuiteList = apiResponse.CipherSuites
-                    .SelectMany(dict => dict) // Flattens the List<Dictionary<...>> into a single IEnumerable of KeyValuePairs
-                    .Select(kvp => new CipherSuiteInfo // Project each KeyValuePair into our flat model
+                    .SelectMany(dict => dict)
+                    .Select(kvp => new CipherSuiteInfo
                     {
                         Name = kvp.Key,
                         Security = kvp.Value.Security,
@@ -177,13 +76,12 @@ Generated html
                         HashAlgorithm = kvp.Value.HashAlgorithm,
                         TlsVersions = string.Join(", ", kvp.Value.TlsVersion)
                     })
-                    .OrderBy(c => c.Name) // Sort alphabetically by name
+                    .OrderBy(c => c.Name)
                     .ToList();
             }
         }
         catch (Exception ex)
         {
-            // In a real app, you would log this error and show a user-friendly message
             Console.WriteLine($"Error fetching or processing cipher suites: {ex.Message}");
         }
         finally
@@ -192,25 +90,36 @@ Generated html
         }
     }
 
-    /// <summary>
-    /// Provides filtering logic for the table's search box.
-    /// </summary>
-    private bool FilterFunc(CipherSuiteInfo element)
+    // MODIFICATION 3: New filtering function for multiple, exact matches
+    private bool MultiFilterFunc(CipherSuiteInfo element)
     {
-        if (string.IsNullOrWhiteSpace(_searchString))
+        // If the input box is empty or just whitespace, show all rows.
+        if (string.IsNullOrWhiteSpace(_searchTermsInput))
+        {
             return true;
-        if (element.Name.Contains(_searchString, StringComparison.OrdinalIgnoreCase))
+        }
+
+        // Split the input text into individual lines, trim whitespace from each,
+        // and remove any empty lines that might result from the split.
+        // We use a HashSet for extremely fast lookups (O(1) average), which is
+        // much more efficient than searching a List (O(n)) repeatedly.
+        // StringComparer.OrdinalIgnoreCase ensures that the matching is not case-sensitive.
+        var searchTerms = new HashSet<string>(
+            _searchTermsInput.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+                             .Select(line => line.Trim()),
+            StringComparer.OrdinalIgnoreCase
+        );
+
+        // If the processed set of terms is empty, there's nothing to filter by, so show all rows.
+        if (!searchTerms.Any())
+        {
             return true;
-        if (element.Security.Contains(_searchString, StringComparison.OrdinalIgnoreCase))
-            return true;
-        if (element.EncAlgorithm.Contains(_searchString, StringComparison.OrdinalIgnoreCase))
-            return true;
-        return false;
+        }
+
+        // Return true (show the row) if the element's name is present in our set of search terms.
+        return searchTerms.Contains(element.Name);
     }
-    
-    /// <summary>
-    /// Returns a MudBlazor Color based on the security level for styling.
-    /// </summary>
+
     private Color GetSecurityColor(string security) => security.ToLower() switch
     {
         "recommended" => Color.Success,
@@ -220,40 +129,3 @@ Generated html
         _ => Color.Default
     };
 }
-IGNORE_WHEN_COPYING_START
-content_copy
-download
-Use code with caution.
-Html
-IGNORE_WHEN_COPYING_END
-Explanation of the Code
-
-Data Fetching (LoadCipherSuites):
-
-The OnInitializedAsync lifecycle method calls LoadCipherSuites to fetch the data when the component loads.
-
-Http.GetFromJsonAsync<CipherSuiteApiResponse>(apiUrl) handles both fetching the data and the initial deserialization into our CipherSuiteApiResponse model.
-
-Data Transformation (LINQ):
-
-This is the most important part. We use a LINQ query to transform the complex, nested API data into a simple List<CipherSuiteInfo>.
-
-.SelectMany(dict => dict): This crucial step takes the List<Dictionary<string, CipherSuiteDetails>> and flattens it into a single sequence (IEnumerable) of KeyValuePair<string, CipherSuiteDetails>.
-
-.Select(kvp => new CipherSuiteInfo { ... }): This projects each key-value pair into our simple CipherSuiteInfo object. The kvp.Key is the cipher suite name, and kvp.Value contains all its details.
-
-string.Join(", ", kvp.Value.TlsVersion): This converts the list of supported TLS versions into a single, readable string for display.
-
-MudBlazor Table:
-
-Items="@_cipherSuiteList": The table is bound to our processed list.
-
-IsLoading="_isLoading": Shows a loading animation while the data is being fetched.
-
-Filter: Connects the search text field to the table's filtering logic. The FilterFunc checks if the search string appears in the name, security level, or encryption algorithm.
-
-MudTableSortLabel: This component is added to the headers to make the columns sortable.
-
-RowTemplate: The @context variable represents one CipherSuiteInfo object, allowing you to easily access its properties (e.g., @context.Name).
-
-GetSecurityColor: This is a helper function that returns a MudBlazor.Color enum to visually style the "Security" chip, making the table more intuitive.
