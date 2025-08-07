@@ -1,75 +1,89 @@
-2. Access the Path Using IConfiguration
-Since you are not using AddDbContext, you will need to manually retrieve this connection string in the part of your code where you manage your database connection. You can do this by using dependency injection to get an instance of the IConfiguration service.
-Let's say you have a custom data access service (e.g., DatabaseService.cs) that handles your database operations. You can inject IConfiguration into its constructor.
-Example of a Data Access Service:
 code
-C#
-// Import the necessary configuration namespace
-using Microsoft.Extensions.Configuration;
-using Microsoft.Data.Sqlite; // Assuming you are using Microsoft.Data.Sqlite
-
-public class DatabaseService
-{
-    private readonly IConfiguration _configuration;
-    private readonly string _connectionString;
-
-    // Inject IConfiguration into the constructor
-    public DatabaseService(IConfiguration configuration)
-    {
-        _configuration = configuration;
-        // Retrieve the connection string from appsettings.json
-        _connectionString = _configuration.GetConnectionString("DefaultConnection");
-    }
-
-    // Method to open a new database connection
-    public SqliteConnection GetConnection()
-    {
-        return new SqliteConnection(_connectionString);
-    }
-
-    // You can now use this service to perform database queries
-    public void YourDatabaseMethod()
-    {
-        using (var connection = GetConnection())
-        {
-            connection.Open();
-            // ... perform your database operations here
-        }
-    }
+Html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Animated Image Blending</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="image-container">
+        <img src="image1.jpg" alt="Image 1" class="blending-image">
+        <img src="image2.jpg" alt="Image 2" class="blending-image">
+        <img src="image3.jpg" alt="Image 3" class="blending-image">
+        <img src="image4.jpg" alt="Image 4" class="blending-image">
+        <img src="image5.jpg" alt="Image 5" class="blending-image">
+    </div>
+</body>
+</html>
+Note: Make sure to replace "image1.jpg", "image2.jpg", etc., with the actual paths to your five images.
+CSS
+code
+Css
+body, html {
+    height: 100%;
+    margin: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: #222;
 }
-3. Register Your Service
-Finally, you need to register your custom DatabaseService with the dependency injection container in your Program.cs file. This makes it available to be injected into your Blazor pages or other services.
-Example Program.cs:
-code
-C#
-var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-builder.Services.AddRazorPages();
-builder.Services.AddServerSideBlazor();
+.image-container {
+    position: relative;
+    width: 80%;
+    max-width: 800px;
+    height: 60vh;
+    overflow: hidden;
+    border-radius: 10px;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+}
 
-// Register your custom DatabaseService as a singleton or scoped service
-// Scoped is often a good choice for data services.
-builder.Services.AddScoped<DatabaseService>(); 
+.blending-image {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0;
+    animation: blend 25s infinite;
+}
 
-var app = builder.Build();
+/* Staggering the animation delay for each image */
+.blending-image:nth-child(1) {
+    animation-delay: 0s;
+}
 
-// ... rest of the Program.cs file```
+.blending-image:nth-child(2) {
+    animation-delay: 5s;
+}
 
-Now, you can inject `DatabaseService` directly into any Blazor component and use it to access your database, all while keeping your connection string securely managed in `appsettings.json`.
+.blending-image:nth-child(3) {
+    animation-delay: 10s;
+}
 
-**Example Blazor Component (`.razor` file):**
+.blending-image:nth-child(4) {
+    animation-delay: 15s;
+}
 
-```csharp
-@page "/data"
-@inject DatabaseService DbService
+.blending-image:nth-child(5) {
+    animation-delay: 20s;
+}
 
-<h3>Database Interaction</h3>
-
-@code {
-    protected override void OnInitialized()
-    {
-        // You can now call methods from your service
-        DbService.YourDatabaseMethod();
+@keyframes blend {
+    0% {
+        opacity: 0;
+    }
+    20% {
+        opacity: 1;
+    }
+    40% {
+        opacity: 0;
+    }
+    100% {
+        opacity: 0;
     }
 }
