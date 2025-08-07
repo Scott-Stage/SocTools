@@ -1,51 +1,75 @@
-@page "/ciphersuites"
-@using System.Text.Json
-@inject HttpClient Http
+2. Access the Path Using IConfiguration
+Since you are not using AddDbContext, you will need to manually retrieve this connection string in the part of your code where you manage your database connection. You can do this by using dependency injection to get an instance of the IConfiguration service.
+Let's say you have a custom data access service (e.g., DatabaseService.cs) that handles your database operations. You can inject IConfiguration into its constructor.
+Example of a Data Access Service:
+code
+C#
+// Import the necessary configuration namespace
+using Microsoft.Extensions.Configuration;
+using Microsoft.Data.Sqlite; // Assuming you are using Microsoft.Data.Sqlite
 
-<PageTitle>Cipher Suites</PageTitle>
+public class DatabaseService
+{
+    private readonly IConfiguration _configuration;
+    private readonly string _connectionString;
 
-<MudText Typo="Typo.h4" GutterBottom="true">TLS/SSL Cipher Suites</MudText>
+    // Inject IConfiguration into the constructor
+    public DatabaseService(IConfiguration configuration)
+    {
+        _configuration = configuration;
+        // Retrieve the connection string from appsettings.json
+        _connectionString = _configuration.GetConnectionString("DefaultConnection");
+    }
 
-<MudTable Items="@_cipherSuiteList"
-          Hover="true"
-          Striped="true"
-          Dense="true"
-          IsLoading="_isLoading"
-          Filter="new Func<CipherSuiteInfo, bool>(MultiFilterFunc)"
-          @bind-SelectedItem="_selectedItem">
+    // Method to open a new database connection
+    public SqliteConnection GetConnection()
+    {
+        return new SqliteConnection(_connectionString);
+    }
 
-    <ToolBarContent>
-        <MudText Typo="Typo.h6">Available Cipher Suites</MudText>
-        <MudSpacer />
-        @* MODIFICATION 4: Add the @onkeyup event handler *@
-        <MudTextField @bind-Value="_searchTermsInput"
-                      @onkeyup="HandleKeyUp"
-                      Placeholder="Paste cipher names, then press Enter to filter..."
-                      Lines="5"
-                      Variant="Variant.Outlined"
-                      Adornment="Adornment.Start"
-                      AdornmentIcon="@Icons.Material.Filled.Search"
-                      IconSize="Size.Medium"
-                      Class="mt-0"
-                      Style="width: 50%;" />
-    </ToolBarContent>
-    <HeaderContent>
-        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.Name)">Name</MudTableSortLabel></MudTh>
-        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.Security)">Security</M/udTh>
-        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.KexAlgorithm)">Key Exchange</MudTableSortLabel></MudTh>
-        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.EncAlgorithm)">Encryption</MudTableSortLabel></MudTh>
-        <MudTh><MudTableSortLabel SortBy="new Func<CipherSuiteInfo, object>(x => x.TlsVersions)">TLS Versions</MudTableSortLabel></MudTh>
-    </HeaderContent>
-    <RowTemplate>
-        <MudTd DataLabel="Name">@context.Name</MudTd>
-        <MudTd DataLabel="Security">
-            <MudChip Label="true" Color="@GetSecurityColor(context.Security)" Size="Size.Small">@context.Security</MudChip>
-        </MudTd>
-        <MudTd DataLabel="Key Exchange">@context.KexAlgorithm</MudTd>
-        <MudTd DataLabel="Encryption">@context.EncAlgorithm</MudTd>
-        <MudTd DataLabel="TLS Versions">@context.TlsVersions</MudTd>
-    </RowTemplate>
-    <PagerContent>
-        <MudTablePager />
-    </PagerContent>
-</MudTable>
+    // You can now use this service to perform database queries
+    public void YourDatabaseMethod()
+    {
+        using (var connection = GetConnection())
+        {
+            connection.Open();
+            // ... perform your database operations here
+        }
+    }
+}
+3. Register Your Service
+Finally, you need to register your custom DatabaseService with the dependency injection container in your Program.cs file. This makes it available to be injected into your Blazor pages or other services.
+Example Program.cs:
+code
+C#
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services to the container.
+builder.Services.AddRazorPages();
+builder.Services.AddServerSideBlazor();
+
+// Register your custom DatabaseService as a singleton or scoped service
+// Scoped is often a good choice for data services.
+builder.Services.AddScoped<DatabaseService>(); 
+
+var app = builder.Build();
+
+// ... rest of the Program.cs file```
+
+Now, you can inject `DatabaseService` directly into any Blazor component and use it to access your database, all while keeping your connection string securely managed in `appsettings.json`.
+
+**Example Blazor Component (`.razor` file):**
+
+```csharp
+@page "/data"
+@inject DatabaseService DbService
+
+<h3>Database Interaction</h3>
+
+@code {
+    protected override void OnInitialized()
+    {
+        // You can now call methods from your service
+        DbService.YourDatabaseMethod();
+    }
+}
