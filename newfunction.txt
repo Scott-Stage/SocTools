@@ -1,133 +1,27 @@
+public class DeviceService : IDeviceService
+{
+    private readonly IPowershellHandler _powershellHandler;
 
-<MudPaper Class="pa-4">
-    <MudGrid>
-        <MudItem xs="12" sm="6" md="3">
-            <MudCard>
-                <MudCardContent>
-                    <MudText Typo="Typo.h6">Total Devices</MudText>
-                    <MudText Typo="Typo.h4">@devices.Count</MudText>
-                </MudCardContent>
-            </MudCard>
-        </MudItem>
-        <MudItem xs="12" sm="6" md="3">
-            <MudCard>
-                <MudCardContent>
-                    <MudText Typo="Typo.h6">Online</MudText>
-                    <MudText Typo="Typo.h4" Color="Color.Success">@onlineCount</MudText>
-                </MudCardContent>
-            </MudCard>
-        </MudItem>
-        <MudItem xs="12" sm="6" md="3">
-            <MudCard>
-                <MudCardContent>
-                    <MudText Typo="Typo.h6">Offline</MudText>
-                    <MudText Typo="Typo.h4" Color="Color.Error">@offlineCount</MudText>
-                </MudCardContent>
-            </MudCard>
-        </MudItem>
-        <MudItem xs="12" sm="6" md="3">
-            <MudCard>
-                <MudCardContent>
-                    <MudText Typo="Typo.h6">Last Refresh</MudText>
-                    <MudText Typo="Typo.subtitle1">@lastRefresh.ToLocalTime()</MudText>
-                </MudCardContent>
-            </MudCard>
-        </MudItem>
-    </MudGrid>
-
-    <MudSpacer Height="20px" />
-
-    <MudTable Items="devices" Hover="true" Dense="true" Bordered="true" Breakpoint="Breakpoint.Sm">
-        <HeaderContent>
-            <MudTh>Computer</MudTh>
-            <MudTh>User</MudTh>
-            <MudTh>Manufacturer</MudTh>
-            <MudTh>Model</MudTh>
-            <MudTh>OS</MudTh>
-            <MudTh>Ping</MudTh>
-            <MudTh>Drive Usage</MudTh>
-            <MudTh>Memory</MudTh>
-            <MudTh>Last Reboot</MudTh>
-        </HeaderContent>
-        <RowTemplate Context="device">
-            <MudTd>@device.ComputerName</MudTd>
-            <MudTd>@device.CurrentUser</MudTd>
-            <MudTd>@device.Manufacturer</MudTd>
-            <MudTd>@device.Model</MudTd>
-            <MudTd>@device.OS</MudTd>
-            <MudTd>
-                @if (device.PingResult?.Equals("Online", StringComparison.OrdinalIgnoreCase) == true)
-                {
-                    <MudChip Color="Color.Success" Variant="Variant.Filled" Size="Size.Small">Online</MudChip>
-                }
-                else
-                {
-                    <MudChip Color="Color.Error" Variant="Variant.Filled" Size="Size.Small">Offline</MudChip>
-                }
-            </MudTd>
-            <MudTd>
-                @if (TryGetDriveUsage(device.DriveSize, device.FreeSpace, out var usage))
-                {
-                    <MudProgressLinear Value="@usage" Color="@(usage > 80 ? Color.Error : usage > 60 ? Color.Warning : Color.Success)" />
-                }
-            </MudTd>
-            <MudTd>@device.Memory</MudTd>
-            <MudTd>@device.LastReboot</MudTd>
-        </RowTemplate>
-    </MudTable>
-</MudPaper>
-
-@code {
-    private List<Device> devices = new();
-    private int onlineCount;
-    private int offlineCount;
-    private DateTime lastRefresh;
-
-    protected override async Task OnInitializedAsync()
+    public DeviceService(IPowershellHandler powershellHandler)
     {
-        await LoadDevicesAsync();
+        _powershellHandler = powershellHandler;
     }
 
-    private async Task LoadDevicesAsync()
+    public async Task<List<Device>> GetAllAsync()
     {
-        devices = await DeviceService.GetAllAsync();
+        // Call your existing PowerShell function that returns JSON
+        string json = await _powershellHandler.RunFunctionAsync("Get-AllDevices");
 
-        onlineCount = devices.Count(d => d.PingResult?.Equals("Online", StringComparison.OrdinalIgnoreCase) == true);
-        offlineCount = devices.Count(d => d.PingResult?.Equals("Offline", StringComparison.OrdinalIgnoreCase) == true);
-        lastRefresh = DateTime.UtcNow;
-    }
+        if (string.IsNullOrWhiteSpace(json))
+            return new List<Device>();
 
-    private bool TryGetDriveUsage(string driveSizeStr, string freeSpaceStr, out double usagePercent)
-    {
-        usagePercent = 0;
-        if (ParseSizeGB(driveSizeStr, out var total) && ParseSizeGB(freeSpaceStr, out var free))
-        {
-            if (total > 0)
+        // PowerShell returns a dictionary keyed by hostname
+        var dict = JsonSerializer.Deserialize<Dictionary<string, Device>>(json,
+            new JsonSerializerOptions
             {
-                usagePercent = Math.Round(((total - free) / total) * 100, 2);
-                return true;
-            }
-        }
-        return false;
-    }
+                PropertyNameCaseInsensitive = true
+            });
 
-    private bool ParseSizeGB(string sizeStr, out double gbValue)
-    {
-        gbValue = 0;
-        if (string.IsNullOrWhiteSpace(sizeStr)) return false;
-
-        // Handle values like "512 GB" or "1 TB"
-        var parts = sizeStr.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length >= 2 && double.TryParse(parts[0], out var value))
-        {
-            gbValue = parts[1].ToUpperInvariant() switch
-            {
-                "GB" => value,
-                "TB" => value * 1024,
-                _ => value
-            };
-            return true;
-        }
-        return false;
+        return dict?.Values.ToList() ?? new List<Device>();
     }
 }
