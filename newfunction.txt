@@ -1,119 +1,140 @@
-Models/Device.cs
-
+1. Updated Device model
 csharp
 Copy
 Edit
-using System;
-using System.Collections.Generic;
-
-public record DiskInfo(string MountPoint, long TotalBytes, long UsedBytes)
-{
-    public double UsedPercent => TotalBytes == 0 ? 0 : (double)UsedBytes / TotalBytes * 100.0;
-}
-
 public class Device
 {
-    public string Id { get; set; } = Guid.NewGuid().ToString();
-    public string Hostname { get; set; } = string.Empty;
-    public bool IsOnline { get; set; }
-    public string LoggedInUser { get; set; } = string.Empty;
-    public List<DiskInfo> Disks { get; set; } = new();
-    public Dictionary<string, string> SoftwareVersions { get; set; } = new();
-    public DateTime LastSeenUtc { get; set; } = DateTime.UtcNow;
+    public string ComputerName { get; set; }
+    public string CurrentUser { get; set; }
+    public string Manufacturer { get; set; }
+    public string LastReboot { get; set; }
+    public string PingResult { get; set; }
+    public string DriveSize { get; set; }
+    public string FreeSpace { get; set; }
+    public string Memory { get; set; }
+    public string Drive { get; set; }
+    public string Model { get; set; }
+    public string OS { get; set; }
+
+    // Optional future expansion
+    // public string ForcePoint { get; set; }
+    // public string Zscaler { get; set; }
+    // public string CrowdStrike { get; set; }
 }
-Services/IDeviceService.cs
+2. Integrated DeviceService
+This will run your PowerShell, capture the JSON, and convert it to a list of Device objects:
 
 csharp
 Copy
 Edit
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading.Tasks;
-
-public interface IDeviceService
-{
-    Task<List<Device>> GetAllAsync();
-    Task<Device?> GetByIdAsync(string id);
-    Task RefreshAsync();
-}
-Services/DeviceService.cs (mock data generator)
-
-csharp
-Copy
-Edit
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
+using System.Management.Automation;
 
 public class DeviceService : IDeviceService
 {
-    private readonly List<Device> _devices;
-    private readonly Random _rng = new();
-
-    public DeviceService()
+    public async Task<List<Device>> GetAllAsync()
     {
-        _devices = Enumerable.Range(1, 12).Select(i => new Device
+        return await Task.Run(() =>
         {
-            Hostname = $"device-{i:00}",
-            IsOnline = _rng.NextDouble() > 0.2,
-            LoggedInUser = _rng.NextDouble() > 0.5 ? $"user{i}" : string.Empty,
-            Disks = new List<DiskInfo>
+            using var ps = PowerShell.Create();
+
+            // Your PowerShell script — for now a mock output
+            ps.AddScript(@"
+                # In real code, your $systemList will be populated dynamically
+                $systemList = @{}
+                $systemList['PC-01'] = @{
+                    computername = 'PC-01'
+                    currentuser = 'alice'
+                    manufacturer = 'Dell'
+                    lastreboot = '2025-08-06 14:22:00'
+                    pingresult = 'Online'
+                    drivesize = '512 GB'
+                    freespace = '120 GB'
+                    memory = '16 GB'
+                    drive = 'C:'
+                    model = 'Latitude 7420'
+                    os = 'Windows 11 Pro'
+                }
+                $systemList['PC-02'] = @{
+                    computername = 'PC-02'
+                    currentuser = 'bob'
+                    manufacturer = 'HP'
+                    lastreboot = '2025-08-06 09:15:00'
+                    pingresult = 'Offline'
+                    drivesize = '256 GB'
+                    freespace = '50 GB'
+                    memory = '8 GB'
+                    drive = 'C:'
+                    model = 'EliteBook 850'
+                    os = 'Windows 10 Pro'
+                }
+
+                $systemList.Values | ConvertTo-Json -Depth 5
+            ");
+
+            var results = ps.Invoke();
+
+            if (ps.HadErrors)
+                throw new System.Exception("PowerShell script error: " + string.Join(", ", ps.Streams.Error));
+
+            var json = string.Join("\n", results);
+
+            var devices = JsonSerializer.Deserialize<List<Device>>(json, new JsonSerializerOptions
             {
-                new DiskInfo("C:", 500L * 1024 * 1024 * 1024, (long)(_rng.NextDouble() * 500L * 1024 * 1024 * 1024)),
-                new DiskInfo("D:", 1000L * 1024 * 1024 * 1024, (long)(_rng.NextDouble() * 1000L * 1024 * 1024 * 1024))
-            },
-            SoftwareVersions = new Dictionary<string, string>
-            {
-                ["Agent"] = $"{_rng.Next(1,4)}.{_rng.Next(0,10)}.{_rng.Next(0,50)}",
-                ["OS"] = _rng.NextDouble() > 0.3 ? "Windows 10" : "Windows 11"
-            },
-            LastSeenUtc = DateTime.UtcNow.AddSeconds(-_rng.Next(0, 600))
-        }).ToList();
+                PropertyNameCaseInsensitive = true
+            });
+
+            return devices ?? new List<Device>();
+        });
     }
-
-    public Task<List<Device>> GetAllAsync() =>
-        Task.FromResult(_devices.Select(Clone).ToList());
-
-    public Task<Device?> GetByIdAsync(string id) =>
-        Task.FromResult(_devices.FirstOrDefault(d => d.Id == id));
-
-    public Task RefreshAsync()
-    {
-        foreach (var d in _devices)
-        {
-            // Randomly change status
-            if (_rng.NextDouble() < 0.15)
-            {
-                d.IsOnline = !d.IsOnline;
-                d.LastSeenUtc = DateTime.UtcNow;
-            }
-
-            // Randomly bump disk usage
-            for (int i = 0; i < d.Disks.Count; i++)
-            {
-                var disk = d.Disks[i];
-                long change = (long)(_rng.NextDouble() * 10 * 1024 * 1024 * 1024);
-                long newUsed = Math.Min(disk.TotalBytes, disk.UsedBytes + change);
-                d.Disks[i] = new DiskInfo(disk.MountPoint, disk.TotalBytes, newUsed);
-            }
-        }
-        return Task.CompletedTask;
-    }
-
-    private Device Clone(Device d) => new()
-    {
-        Id = d.Id,
-        Hostname = d.Hostname,
-        IsOnline = d.IsOnline,
-        LoggedInUser = d.LoggedInUser,
-        Disks = d.Disks.Select(x => new DiskInfo(x.MountPoint, x.TotalBytes, x.UsedBytes)).ToList(),
-        SoftwareVersions = new Dictionary<string, string>(d.SoftwareVersions),
-        LastSeenUtc = d.LastSeenUtc
-    };
 }
-Registration in Program.cs
+3. Razor Component (Dashboard)
+Here’s the simplified MudBlazor Razor component wired to the new service:
 
-csharp
+razor
 Copy
 Edit
-builder.Services.AddSingleton<IDeviceService, DeviceService>();
+@page "/admin-dashboard"
+@inject IDeviceService DeviceService
+
+<MudPaper Class="pa-4">
+    <MudTable Items="devices" Hover="true" Dense="true" Bordered="true">
+        <HeaderContent>
+            <MudTh>Computer Name</MudTh>
+            <MudTh>User</MudTh>
+            <MudTh>Manufacturer</MudTh>
+            <MudTh>Last Reboot</MudTh>
+            <MudTh>Ping</MudTh>
+            <MudTh>Drive Size</MudTh>
+            <MudTh>Free Space</MudTh>
+            <MudTh>Memory</MudTh>
+            <MudTh>Drive</MudTh>
+            <MudTh>Model</MudTh>
+            <MudTh>OS</MudTh>
+        </HeaderContent>
+        <RowTemplate Context="device">
+            <MudTd>@device.ComputerName</MudTd>
+            <MudTd>@device.CurrentUser</MudTd>
+            <MudTd>@device.Manufacturer</MudTd>
+            <MudTd>@device.LastReboot</MudTd>
+            <MudTd>@device.PingResult</MudTd>
+            <MudTd>@device.DriveSize</MudTd>
+            <MudTd>@device.FreeSpace</MudTd>
+            <MudTd>@device.Memory</MudTd>
+            <MudTd>@device.Drive</MudTd>
+            <MudTd>@device.Model</MudTd>
+            <MudTd>@device.OS</MudTd>
+        </RowTemplate>
+    </MudTable>
+</MudPaper>
+
+@code {
+    private List<Device> devices = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        devices = await DeviceService.GetAllAsync();
+    }
+}
