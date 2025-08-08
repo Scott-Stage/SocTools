@@ -1,140 +1,133 @@
-1. Updated Device model
-csharp
-Copy
-Edit
-public class Device
-{
-    public string ComputerName { get; set; }
-    public string CurrentUser { get; set; }
-    public string Manufacturer { get; set; }
-    public string LastReboot { get; set; }
-    public string PingResult { get; set; }
-    public string DriveSize { get; set; }
-    public string FreeSpace { get; set; }
-    public string Memory { get; set; }
-    public string Drive { get; set; }
-    public string Model { get; set; }
-    public string OS { get; set; }
-
-    // Optional future expansion
-    // public string ForcePoint { get; set; }
-    // public string Zscaler { get; set; }
-    // public string CrowdStrike { get; set; }
-}
-2. Integrated DeviceService
-This will run your PowerShell, capture the JSON, and convert it to a list of Device objects:
-
-csharp
-Copy
-Edit
-using System.Collections.Generic;
-using System.Text.Json;
-using System.Threading.Tasks;
-using System.Management.Automation;
-
-public class DeviceService : IDeviceService
-{
-    public async Task<List<Device>> GetAllAsync()
-    {
-        return await Task.Run(() =>
-        {
-            using var ps = PowerShell.Create();
-
-            // Your PowerShell script — for now a mock output
-            ps.AddScript(@"
-                # In real code, your $systemList will be populated dynamically
-                $systemList = @{}
-                $systemList['PC-01'] = @{
-                    computername = 'PC-01'
-                    currentuser = 'alice'
-                    manufacturer = 'Dell'
-                    lastreboot = '2025-08-06 14:22:00'
-                    pingresult = 'Online'
-                    drivesize = '512 GB'
-                    freespace = '120 GB'
-                    memory = '16 GB'
-                    drive = 'C:'
-                    model = 'Latitude 7420'
-                    os = 'Windows 11 Pro'
-                }
-                $systemList['PC-02'] = @{
-                    computername = 'PC-02'
-                    currentuser = 'bob'
-                    manufacturer = 'HP'
-                    lastreboot = '2025-08-06 09:15:00'
-                    pingresult = 'Offline'
-                    drivesize = '256 GB'
-                    freespace = '50 GB'
-                    memory = '8 GB'
-                    drive = 'C:'
-                    model = 'EliteBook 850'
-                    os = 'Windows 10 Pro'
-                }
-
-                $systemList.Values | ConvertTo-Json -Depth 5
-            ");
-
-            var results = ps.Invoke();
-
-            if (ps.HadErrors)
-                throw new System.Exception("PowerShell script error: " + string.Join(", ", ps.Streams.Error));
-
-            var json = string.Join("\n", results);
-
-            var devices = JsonSerializer.Deserialize<List<Device>>(json, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
-
-            return devices ?? new List<Device>();
-        });
-    }
-}
-3. Razor Component (Dashboard)
-Here’s the simplified MudBlazor Razor component wired to the new service:
-
-razor
-Copy
-Edit
-@page "/admin-dashboard"
-@inject IDeviceService DeviceService
 
 <MudPaper Class="pa-4">
-    <MudTable Items="devices" Hover="true" Dense="true" Bordered="true">
+    <MudGrid>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard>
+                <MudCardContent>
+                    <MudText Typo="Typo.h6">Total Devices</MudText>
+                    <MudText Typo="Typo.h4">@devices.Count</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard>
+                <MudCardContent>
+                    <MudText Typo="Typo.h6">Online</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Success">@onlineCount</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard>
+                <MudCardContent>
+                    <MudText Typo="Typo.h6">Offline</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Error">@offlineCount</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard>
+                <MudCardContent>
+                    <MudText Typo="Typo.h6">Last Refresh</MudText>
+                    <MudText Typo="Typo.subtitle1">@lastRefresh.ToLocalTime()</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    <MudSpacer Height="20px" />
+
+    <MudTable Items="devices" Hover="true" Dense="true" Bordered="true" Breakpoint="Breakpoint.Sm">
         <HeaderContent>
-            <MudTh>Computer Name</MudTh>
+            <MudTh>Computer</MudTh>
             <MudTh>User</MudTh>
             <MudTh>Manufacturer</MudTh>
-            <MudTh>Last Reboot</MudTh>
-            <MudTh>Ping</MudTh>
-            <MudTh>Drive Size</MudTh>
-            <MudTh>Free Space</MudTh>
-            <MudTh>Memory</MudTh>
-            <MudTh>Drive</MudTh>
             <MudTh>Model</MudTh>
             <MudTh>OS</MudTh>
+            <MudTh>Ping</MudTh>
+            <MudTh>Drive Usage</MudTh>
+            <MudTh>Memory</MudTh>
+            <MudTh>Last Reboot</MudTh>
         </HeaderContent>
         <RowTemplate Context="device">
             <MudTd>@device.ComputerName</MudTd>
             <MudTd>@device.CurrentUser</MudTd>
             <MudTd>@device.Manufacturer</MudTd>
-            <MudTd>@device.LastReboot</MudTd>
-            <MudTd>@device.PingResult</MudTd>
-            <MudTd>@device.DriveSize</MudTd>
-            <MudTd>@device.FreeSpace</MudTd>
-            <MudTd>@device.Memory</MudTd>
-            <MudTd>@device.Drive</MudTd>
             <MudTd>@device.Model</MudTd>
             <MudTd>@device.OS</MudTd>
+            <MudTd>
+                @if (device.PingResult?.Equals("Online", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    <MudChip Color="Color.Success" Variant="Variant.Filled" Size="Size.Small">Online</MudChip>
+                }
+                else
+                {
+                    <MudChip Color="Color.Error" Variant="Variant.Filled" Size="Size.Small">Offline</MudChip>
+                }
+            </MudTd>
+            <MudTd>
+                @if (TryGetDriveUsage(device.DriveSize, device.FreeSpace, out var usage))
+                {
+                    <MudProgressLinear Value="@usage" Color="@(usage > 80 ? Color.Error : usage > 60 ? Color.Warning : Color.Success)" />
+                }
+            </MudTd>
+            <MudTd>@device.Memory</MudTd>
+            <MudTd>@device.LastReboot</MudTd>
         </RowTemplate>
     </MudTable>
 </MudPaper>
 
 @code {
     private List<Device> devices = new();
+    private int onlineCount;
+    private int offlineCount;
+    private DateTime lastRefresh;
 
     protected override async Task OnInitializedAsync()
     {
+        await LoadDevicesAsync();
+    }
+
+    private async Task LoadDevicesAsync()
+    {
         devices = await DeviceService.GetAllAsync();
+
+        onlineCount = devices.Count(d => d.PingResult?.Equals("Online", StringComparison.OrdinalIgnoreCase) == true);
+        offlineCount = devices.Count(d => d.PingResult?.Equals("Offline", StringComparison.OrdinalIgnoreCase) == true);
+        lastRefresh = DateTime.UtcNow;
+    }
+
+    private bool TryGetDriveUsage(string driveSizeStr, string freeSpaceStr, out double usagePercent)
+    {
+        usagePercent = 0;
+        if (ParseSizeGB(driveSizeStr, out var total) && ParseSizeGB(freeSpaceStr, out var free))
+        {
+            if (total > 0)
+            {
+                usagePercent = Math.Round(((total - free) / total) * 100, 2);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private bool ParseSizeGB(string sizeStr, out double gbValue)
+    {
+        gbValue = 0;
+        if (string.IsNullOrWhiteSpace(sizeStr)) return false;
+
+        // Handle values like "512 GB" or "1 TB"
+        var parts = sizeStr.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 2 && double.TryParse(parts[0], out var value))
+        {
+            gbValue = parts[1].ToUpperInvariant() switch
+            {
+                "GB" => value,
+                "TB" => value * 1024,
+                _ => value
+            };
+            return true;
+        }
+        return false;
     }
 }
