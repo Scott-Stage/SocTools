@@ -1,89 +1,132 @@
-code
-Html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Animated Image Blending</title>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <div class="image-container">
-        <img src="image1.jpg" alt="Image 1" class="blending-image">
-        <img src="image2.jpg" alt="Image 2" class="blending-image">
-        <img src="image3.jpg" alt="Image 3" class="blending-image">
-        <img src="image4.jpg" alt="Image 4" class="blending-image">
-        <img src="image5.jpg" alt="Image 5" class="blending-image">
-    </div>
-</body>
-</html>
-Note: Make sure to replace "image1.jpg", "image2.jpg", etc., with the actual paths to your five images.
-CSS
-code
-Css
-body, html {
-    height: 100%;
-    margin: 0;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    background-color: #222;
-}
+@page "/devices"
+@inject IDeviceService DeviceService
+@using MudBlazor
+@implements IDisposable
 
-.image-container {
-    position: relative;
-    width: 80%;
-    max-width: 800px;
-    height: 60vh;
-    overflow: hidden;
-    border-radius: 10px;
-    box-shadow: 0 10px 20px rgba(0,0,0,0.3);
-}
+<PageTitle>Device Dashboard</PageTitle>
 
-.blending-image {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    opacity: 0;
-    animation: blend 25s infinite;
-}
+<MudContainer MaxWidth="MaxWidth.False" Class="pa-4">
+    <MudStack Spacing="3">
+        <MudText Typo="Typo.h4" GutterBottom="true">Device Dashboard</MudText>
 
-/* Staggering the animation delay for each image */
-.blending-image:nth-child(1) {
-    animation-delay: 0s;
-}
+        <MudStack Direction="Row" Spacing="2" AlignItems="Center">
+            <MudTextField @bind-Value="searchTerm" Placeholder="Search hostname or user" Variant="Variant.Outlined" />
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Refresh">Refresh</MudButton>
+            <MudSelect T="int" Label="Auto-refresh" @bind-Value="refreshSeconds">
+                <MudSelectItem Value="0">Off</MudSelectItem>
+                <MudSelectItem Value="5">5s</MudSelectItem>
+                <MudSelectItem Value="15">15s</MudSelectItem>
+                <MudSelectItem Value="30">30s</MudSelectItem>
+            </MudSelect>
+        </MudStack>
 
-.blending-image:nth-child(2) {
-    animation-delay: 5s;
-}
+        <MudTable Items="Filtered" Hover="true" Dense="true">
+            <HeaderContent>
+                <MudTh>Status</MudTh>
+                <MudTh>Hostname</MudTh>
+                <MudTh>Logged In User</MudTh>
+                <MudTh>Drive(s)</MudTh>
+                <MudTh>Software Versions</MudTh>
+                <MudTh>Last Seen (UTC)</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Status">
+                    @if (context.IsOnline)
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.Circle" Color="Color.Success" Size="Size.Small" />
+                    }
+                    else
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.Circle" Color="Color.Error" Size="Size.Small" />
+                    }
+                </MudTd>
+                <MudTd DataLabel="Hostname">@context.Hostname</MudTd>
+                <MudTd DataLabel="Logged In User">@(string.IsNullOrEmpty(context.LoggedInUser) ? "—" : context.LoggedInUser)</MudTd>
+                <MudTd DataLabel="Drive(s)">
+                    @foreach (var disk in context.Disks)
+                    {
+                        <MudProgressLinear Value="disk.UsedPercent" Color="Color.Primary" Class="mb-1" />
+                        <MudText Typo="Typo.caption">
+                            @disk.MountPoint: @BytesToHuman(disk.UsedBytes) / @BytesToHuman(disk.TotalBytes)
+                        </MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Software Versions">
+                    @foreach (var kv in context.SoftwareVersions)
+                    {
+                        <MudChip Color="Color.Info" Variant="Variant.Outlined">@kv.Key: @kv.Value</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Last Seen (UTC)">@context.LastSeenUtc.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+            </RowTemplate>
+        </MudTable>
+    </MudStack>
+</MudContainer>
 
-.blending-image:nth-child(3) {
-    animation-delay: 10s;
-}
+@code {
+    private List<Device> devices = new();
+    private System.Threading.Timer? _timer;
+    private int refreshSeconds = 0;
+    private string searchTerm = string.Empty;
 
-.blending-image:nth-child(4) {
-    animation-delay: 15s;
-}
-
-.blending-image:nth-child(5) {
-    animation-delay: 20s;
-}
-
-@keyframes blend {
-    0% {
-        opacity: 0;
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
     }
-    20% {
-        opacity: 1;
+
+    private IEnumerable<Device> Filtered => devices
+        .Where(d => string.IsNullOrWhiteSpace(searchTerm) ||
+                    d.Hostname.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                    (d.LoggedInUser?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ?? false))
+        .OrderByDescending(d => d.IsOnline)
+        .ThenBy(d => d.Hostname);
+
+    private async Task LoadAsync()
+    {
+        devices = await DeviceService.GetAllAsync();
+        StateHasChanged();
     }
-    40% {
-        opacity: 0;
+
+    private async Task Refresh()
+    {
+        await DeviceService.RefreshAsync();
+        await LoadAsync();
     }
-    100% {
-        opacity: 0;
+
+    private string BytesToHuman(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB", "TB" };
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len /= 1024;
+        }
+        return $"{len:0.#}{sizes[order]}";
+    }
+
+    private void StartTimer()
+    {
+        _timer?.Dispose();
+        if (refreshSeconds > 0)
+        {
+            _timer = new System.Threading.Timer(async _ => await Refresh(), null, refreshSeconds * 1000, refreshSeconds * 1000);
+        }
+    }
+
+    private int refreshSecondsProp
+    {
+        get => refreshSeconds;
+        set
+        {
+            refreshSeconds = value;
+            StartTimer();
+        }
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
     }
 }
