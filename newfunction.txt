@@ -1,132 +1,119 @@
-@page "/devices"
-@inject IDeviceService DeviceService
-@using MudBlazor
-@implements IDisposable
+Models/Device.cs
 
-<PageTitle>Device Dashboard</PageTitle>
+csharp
+Copy
+Edit
+using System;
+using System.Collections.Generic;
 
-<MudContainer MaxWidth="MaxWidth.False" Class="pa-4">
-    <MudStack Spacing="3">
-        <MudText Typo="Typo.h4" GutterBottom="true">Device Dashboard</MudText>
-
-        <MudStack Direction="Row" Spacing="2" AlignItems="Center">
-            <MudTextField @bind-Value="searchTerm" Placeholder="Search hostname or user" Variant="Variant.Outlined" />
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Refresh">Refresh</MudButton>
-            <MudSelect T="int" Label="Auto-refresh" @bind-Value="refreshSeconds">
-                <MudSelectItem Value="0">Off</MudSelectItem>
-                <MudSelectItem Value="5">5s</MudSelectItem>
-                <MudSelectItem Value="15">15s</MudSelectItem>
-                <MudSelectItem Value="30">30s</MudSelectItem>
-            </MudSelect>
-        </MudStack>
-
-        <MudTable Items="Filtered" Hover="true" Dense="true">
-            <HeaderContent>
-                <MudTh>Status</MudTh>
-                <MudTh>Hostname</MudTh>
-                <MudTh>Logged In User</MudTh>
-                <MudTh>Drive(s)</MudTh>
-                <MudTh>Software Versions</MudTh>
-                <MudTh>Last Seen (UTC)</MudTh>
-            </HeaderContent>
-            <RowTemplate>
-                <MudTd DataLabel="Status">
-                    @if (context.IsOnline)
-                    {
-                        <MudIcon Icon="@Icons.Material.Filled.Circle" Color="Color.Success" Size="Size.Small" />
-                    }
-                    else
-                    {
-                        <MudIcon Icon="@Icons.Material.Filled.Circle" Color="Color.Error" Size="Size.Small" />
-                    }
-                </MudTd>
-                <MudTd DataLabel="Hostname">@context.Hostname</MudTd>
-                <MudTd DataLabel="Logged In User">@(string.IsNullOrEmpty(context.LoggedInUser) ? "—" : context.LoggedInUser)</MudTd>
-                <MudTd DataLabel="Drive(s)">
-                    @foreach (var disk in context.Disks)
-                    {
-                        <MudProgressLinear Value="disk.UsedPercent" Color="Color.Primary" Class="mb-1" />
-                        <MudText Typo="Typo.caption">
-                            @disk.MountPoint: @BytesToHuman(disk.UsedBytes) / @BytesToHuman(disk.TotalBytes)
-                        </MudText>
-                    }
-                </MudTd>
-                <MudTd DataLabel="Software Versions">
-                    @foreach (var kv in context.SoftwareVersions)
-                    {
-                        <MudChip Color="Color.Info" Variant="Variant.Outlined">@kv.Key: @kv.Value</MudChip>
-                    }
-                </MudTd>
-                <MudTd DataLabel="Last Seen (UTC)">@context.LastSeenUtc.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
-            </RowTemplate>
-        </MudTable>
-    </MudStack>
-</MudContainer>
-
-@code {
-    private List<Device> devices = new();
-    private System.Threading.Timer? _timer;
-    private int refreshSeconds = 0;
-    private string searchTerm = string.Empty;
-
-    protected override async Task OnInitializedAsync()
-    {
-        await LoadAsync();
-    }
-
-    private IEnumerable<Device> Filtered => devices
-        .Where(d => string.IsNullOrWhiteSpace(searchTerm) ||
-                    d.Hostname.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
-                    (d.LoggedInUser?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ?? false))
-        .OrderByDescending(d => d.IsOnline)
-        .ThenBy(d => d.Hostname);
-
-    private async Task LoadAsync()
-    {
-        devices = await DeviceService.GetAllAsync();
-        StateHasChanged();
-    }
-
-    private async Task Refresh()
-    {
-        await DeviceService.RefreshAsync();
-        await LoadAsync();
-    }
-
-    private string BytesToHuman(long bytes)
-    {
-        string[] sizes = { "B", "KB", "MB", "GB", "TB" };
-        double len = bytes;
-        int order = 0;
-        while (len >= 1024 && order < sizes.Length - 1)
-        {
-            order++;
-            len /= 1024;
-        }
-        return $"{len:0.#}{sizes[order]}";
-    }
-
-    private void StartTimer()
-    {
-        _timer?.Dispose();
-        if (refreshSeconds > 0)
-        {
-            _timer = new System.Threading.Timer(async _ => await Refresh(), null, refreshSeconds * 1000, refreshSeconds * 1000);
-        }
-    }
-
-    private int refreshSecondsProp
-    {
-        get => refreshSeconds;
-        set
-        {
-            refreshSeconds = value;
-            StartTimer();
-        }
-    }
-
-    public void Dispose()
-    {
-        _timer?.Dispose();
-    }
+public record DiskInfo(string MountPoint, long TotalBytes, long UsedBytes)
+{
+    public double UsedPercent => TotalBytes == 0 ? 0 : (double)UsedBytes / TotalBytes * 100.0;
 }
+
+public class Device
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string Hostname { get; set; } = string.Empty;
+    public bool IsOnline { get; set; }
+    public string LoggedInUser { get; set; } = string.Empty;
+    public List<DiskInfo> Disks { get; set; } = new();
+    public Dictionary<string, string> SoftwareVersions { get; set; } = new();
+    public DateTime LastSeenUtc { get; set; } = DateTime.UtcNow;
+}
+Services/IDeviceService.cs
+
+csharp
+Copy
+Edit
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+public interface IDeviceService
+{
+    Task<List<Device>> GetAllAsync();
+    Task<Device?> GetByIdAsync(string id);
+    Task RefreshAsync();
+}
+Services/DeviceService.cs (mock data generator)
+
+csharp
+Copy
+Edit
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+
+public class DeviceService : IDeviceService
+{
+    private readonly List<Device> _devices;
+    private readonly Random _rng = new();
+
+    public DeviceService()
+    {
+        _devices = Enumerable.Range(1, 12).Select(i => new Device
+        {
+            Hostname = $"device-{i:00}",
+            IsOnline = _rng.NextDouble() > 0.2,
+            LoggedInUser = _rng.NextDouble() > 0.5 ? $"user{i}" : string.Empty,
+            Disks = new List<DiskInfo>
+            {
+                new DiskInfo("C:", 500L * 1024 * 1024 * 1024, (long)(_rng.NextDouble() * 500L * 1024 * 1024 * 1024)),
+                new DiskInfo("D:", 1000L * 1024 * 1024 * 1024, (long)(_rng.NextDouble() * 1000L * 1024 * 1024 * 1024))
+            },
+            SoftwareVersions = new Dictionary<string, string>
+            {
+                ["Agent"] = $"{_rng.Next(1,4)}.{_rng.Next(0,10)}.{_rng.Next(0,50)}",
+                ["OS"] = _rng.NextDouble() > 0.3 ? "Windows 10" : "Windows 11"
+            },
+            LastSeenUtc = DateTime.UtcNow.AddSeconds(-_rng.Next(0, 600))
+        }).ToList();
+    }
+
+    public Task<List<Device>> GetAllAsync() =>
+        Task.FromResult(_devices.Select(Clone).ToList());
+
+    public Task<Device?> GetByIdAsync(string id) =>
+        Task.FromResult(_devices.FirstOrDefault(d => d.Id == id));
+
+    public Task RefreshAsync()
+    {
+        foreach (var d in _devices)
+        {
+            // Randomly change status
+            if (_rng.NextDouble() < 0.15)
+            {
+                d.IsOnline = !d.IsOnline;
+                d.LastSeenUtc = DateTime.UtcNow;
+            }
+
+            // Randomly bump disk usage
+            for (int i = 0; i < d.Disks.Count; i++)
+            {
+                var disk = d.Disks[i];
+                long change = (long)(_rng.NextDouble() * 10 * 1024 * 1024 * 1024);
+                long newUsed = Math.Min(disk.TotalBytes, disk.UsedBytes + change);
+                d.Disks[i] = new DiskInfo(disk.MountPoint, disk.TotalBytes, newUsed);
+            }
+        }
+        return Task.CompletedTask;
+    }
+
+    private Device Clone(Device d) => new()
+    {
+        Id = d.Id,
+        Hostname = d.Hostname,
+        IsOnline = d.IsOnline,
+        LoggedInUser = d.LoggedInUser,
+        Disks = d.Disks.Select(x => new DiskInfo(x.MountPoint, x.TotalBytes, x.UsedBytes)).ToList(),
+        SoftwareVersions = new Dictionary<string, string>(d.SoftwareVersions),
+        LastSeenUtc = d.LastSeenUtc
+    };
+}
+Registration in Program.cs
+
+csharp
+Copy
+Edit
+builder.Services.AddSingleton<IDeviceService, DeviceService>();
