@@ -1,21 +1,24 @@
-public class DeviceService : IDeviceService
-{
-    private readonly IPowershellHandler _powershellHandler;
+DeviceService.cs
+using System.Text.Json;
 
-    public DeviceService(IPowershellHandler powershellHandler)
+public class DeviceService
+{
+    private readonly PowershellHandler _powershellHandler;
+
+    public DeviceService(PowershellHandler powershellHandler)
     {
         _powershellHandler = powershellHandler;
     }
 
     public async Task<List<Device>> GetAllAsync()
     {
-        // Call your existing PowerShell function that returns JSON
+        // Call PowerShell function and get JSON
         string json = await _powershellHandler.RunFunctionAsync("Get-AllDevices");
 
         if (string.IsNullOrWhiteSpace(json))
             return new List<Device>();
 
-        // PowerShell returns a dictionary keyed by hostname
+        // Deserialize into dictionary keyed by hostname
         var dict = JsonSerializer.Deserialize<Dictionary<string, Device>>(json,
             new JsonSerializerOptions
             {
@@ -23,5 +26,34 @@ public class DeviceService : IDeviceService
             });
 
         return dict?.Values.ToList() ?? new List<Device>();
+    }
+}
+
+
+
+PowershellHandler.cs
+public class PowershellHandler
+{
+    public async Task<string> RunFunctionAsync(string functionName)
+    {
+        // Example: Load your PS1 file and invoke the function
+        // For now, we just simulate a JSON return
+        await Task.Delay(200); // simulate delay
+        return @"
+        {
+            ""PC-01"": {
+                ""ComputerName"": ""PC-01"",
+                ""CurrentUser"": ""John"",
+                ""Manufacturer"": ""Dell"",
+                ""LastReboot"": ""2025-08-01T08:00:00"",
+                ""PingResult"": ""Online"",
+                ""DriveSize"": ""500GB"",
+                ""FreeSpace"": ""200GB"",
+                ""Memory"": ""16GB"",
+                ""Drive"": ""C:\",
+                ""Model"": ""XPS 15"",
+                ""OS"": ""Windows 11""
+            }
+        }";
     }
 }
