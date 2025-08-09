@@ -1,59 +1,87 @@
-DeviceService.cs
-using System.Text.Json;
-
-public class DeviceService
 {
-    private readonly PowershellHandler _powershellHandler;
-
-    public DeviceService(PowershellHandler powershellHandler)
-    {
-        _powershellHandler = powershellHandler;
-    }
-
-    public async Task<List<Device>> GetAllAsync()
-    {
-        // Call PowerShell function and get JSON
-        string json = await _powershellHandler.RunFunctionAsync("Get-AllDevices");
-
-        if (string.IsNullOrWhiteSpace(json))
-            return new List<Device>();
-
-        // Deserialize into dictionary keyed by hostname
-        var dict = JsonSerializer.Deserialize<Dictionary<string, Device>>(json,
-            new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
-
-        return dict?.Values.ToList() ?? new List<Device>();
-    }
+  "action": "GetSocPcInfo",
+  "success": true,
+  "output": {
+    "PC-1": {
+      "computername": "PC-1",
+      "currentuser": "User1",
+      "manufacturer": "Dell",
+      "lastreboot": "2025-08-08T12:34:56",
+      ...
+    },
+    "PC-2": { ... }
+  }
 }
+2️⃣ The matching C# model
+First, match the JSON exactly:
 
-
-
-PowershellHandler.cs
-public class PowershellHandler
+csharp
+Copy
+Edit
+public class PowerShellResponse
 {
-    public async Task<string> RunFunctionAsync(string functionName)
-    {
-        // Example: Load your PS1 file and invoke the function
-        // For now, we just simulate a JSON return
-        await Task.Delay(200); // simulate delay
-        return @"
-        {
-            ""PC-01"": {
-                ""ComputerName"": ""PC-01"",
-                ""CurrentUser"": ""John"",
-                ""Manufacturer"": ""Dell"",
-                ""LastReboot"": ""2025-08-01T08:00:00"",
-                ""PingResult"": ""Online"",
-                ""DriveSize"": ""500GB"",
-                ""FreeSpace"": ""200GB"",
-                ""Memory"": ""16GB"",
-                ""Drive"": ""C:\",
-                ""Model"": ""XPS 15"",
-                ""OS"": ""Windows 11""
-            }
-        }";
-    }
+    public string Action { get; set; }
+    public bool Success { get; set; }
+    public Dictionary<string, Dictionary<string, object>> Output { get; set; }
 }
+This gives you a generic representation of each device’s details.
+
+3️⃣ Deserialize into your intermediate model
+csharp
+Copy
+Edit
+var psResponse = JsonSerializer.Deserialize<PowerShellResponse>(jsonString);
+Now you have psResponse.Output as:
+
+csharp
+Copy
+Edit
+Dictionary<string, Dictionary<string, object>>
+4️⃣ Map into your custom model
+Let’s say your custom model is:
+
+csharp
+Copy
+Edit
+public class DeviceModel
+{
+    public string ComputerName { get; set; }
+    public string CurrentUser { get; set; }
+    public string Manufacturer { get; set; }
+    public DateTime LastReboot { get; set; }
+    public double DriveSize { get; set; }
+    public double FreeSpace { get; set; }
+}
+Here’s how to map it:
+
+csharp
+Copy
+Edit
+var devices = psResponse.Output
+    .Select(kvp => new DeviceModel
+    {
+        ComputerName = kvp.Value["computername"]?.ToString(),
+        CurrentUser = kvp.Value["currentuser"]?.ToString(),
+        Manufacturer = kvp.Value["manufacturer"]?.ToString(),
+        LastReboot = DateTime.TryParse(kvp.Value["lastreboot"]?.ToString(), out var reboot) ? reboot : DateTime.MinValue,
+        DriveSize = double.TryParse(kvp.Value["drivesize"]?.ToString(), out var size) ? size : 0,
+        FreeSpace = double.TryParse(kvp.Value["freespace"]?.ToString(), out var free) ? free : 0
+    })
+    .OrderBy(d => d.ComputerName)
+    .ToList();
+5️⃣ Why your .SelectMany() approach failed
+If you start with psResponse.Output and do:
+
+csharp
+Copy
+Edit
+.SelectMany(dict => dict)
+You’re actually flattening the outer dictionary into KeyValuePairs, which isn’t the same as iterating over devices.
+That would give you a list of both device names and device property dictionaries mixed together — not what you want.
+
+Instead, you want:
+
+.Select(kvp => new CustomObject { ... }) directly on the outer dictionary (Output).
+
+Map each kvp.Value (inner dictionary of props) to your model properties.
+
