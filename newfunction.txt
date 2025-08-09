@@ -1,63 +1,112 @@
-Example in your context
-Right now your PowerShell JSON looks like:
+@page "/admin-dashboard"
+@using MudBlazor
 
-json
-Copy
-Edit
-{
-  "action": "GetSocPcInfo",
-  "success": true,
-  "output": {
-    "PC-1": { "computername": "PC-1", "currentuser": "User1" },
-    "PC-2": { "computername": "PC-2", "currentuser": "User2" }
-  }
+<MudPaper Class="pa-4">
+    <MudStack Row="true" Spacing="2" AlignItems="Center" Class="mb-4">
+        <MudTextField @bind-Value="_searchString" 
+                      Immediate="true" 
+                      Placeholder="Search..." 
+                      Adornment="Adornment.Start" 
+                      AdornmentIcon="@Icons.Material.Filled.Search" 
+                      Class="mr-4" />
+        
+        <MudSelect T="string" Label="Status" @bind-Value="_statusFilter" Class="mr-4" Clearable="true">
+            <MudSelectItem Value="Online">Online</MudSelectItem>
+            <MudSelectItem Value="Offline">Offline</MudSelectItem>
+        </MudSelect>
+    </MudStack>
+
+    <MudTable Items="_devices" Filter="FilterDevices" Hover="true" SortLabel="Sort By" Bordered="true" Striped="true" Dense="true">
+        <HeaderContent>
+            <MudTh>Status</MudTh>
+            <MudTh>Hostname</MudTh>
+            <MudTh>Current User</MudTh>
+            <MudTh>Drive Capacity</MudTh>
+            <MudTh>Last Reboot</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>
+                @if (context.Heartbeat)
+                {
+                    <MudIcon Color="Color.Success" Icon="@Icons.Material.Filled.Circle" Size="Size.Small" />
+                }
+                else
+                {
+                    <MudIcon Color="Color.Error" Icon="@Icons.Material.Filled.Circle" Size="Size.Small" />
+                }
+            </MudTd>
+            <MudTd>@context.ComputerName</MudTd>
+            <MudTd>@context.CurrentUser</MudTd>
+            <MudTd>@($"{context.DriveSize} GB")</MudTd>
+            <MudTd>@context.LastReboot.ToString("g")</MudTd>
+            <MudTd>
+                <MudTableRowDetailTemplate>
+                    <MudText Typo="Typo.body2">
+                        <b>Manufacturer:</b> @context.Manufacturer<br />
+                        <b>Free Space:</b> @context.FreeSpace GB<br />
+                        <b>Model:</b> @context.Model<br />
+                        <b>OS:</b> @context.OS
+                    </MudText>
+                </MudTableRowDetailTemplate>
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+</MudPaper>
+
+@code {
+    private string _searchString = "";
+    private string _statusFilter = null;
+
+    private List<DeviceModel> _devices = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Replace with actual data load
+        _devices = new List<DeviceModel>
+        {
+            new DeviceModel { Heartbeat = true, ComputerName = "PC-01", CurrentUser = "jdoe", DriveSize = 512, FreeSpace = 120, Manufacturer = "Dell", Model = "Optiplex", OS = "Windows 11", LastReboot = DateTime.Now.AddDays(-2) },
+            new DeviceModel { Heartbeat = false, ComputerName = "PC-02", CurrentUser = "asmith", DriveSize = 256, FreeSpace = 50, Manufacturer = "HP", Model = "EliteBook", OS = "Windows 10", LastReboot = DateTime.Now.AddDays(-10) }
+        };
+    }
+
+    private bool FilterDevices(DeviceModel device)
+    {
+        // Status filter
+        if (!string.IsNullOrWhiteSpace(_statusFilter))
+        {
+            if (_statusFilter == "Online" && !device.Heartbeat) return false;
+            if (_statusFilter == "Offline" && device.Heartbeat) return false;
+        }
+
+        // Search filter
+        if (string.IsNullOrWhiteSpace(_searchString))
+            return true;
+
+        if (device.ComputerName.Contains(_searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (device.CurrentUser?.Contains(_searchString, StringComparison.OrdinalIgnoreCase) ?? false)
+            return true;
+        if (device.Manufacturer?.Contains(_searchString, StringComparison.OrdinalIgnoreCase) ?? false)
+            return true;
+        if (device.Model?.Contains(_searchString, StringComparison.OrdinalIgnoreCase) ?? false)
+            return true;
+        if (device.OS?.Contains(_searchString, StringComparison.OrdinalIgnoreCase) ?? false)
+            return true;
+
+        return false;
+    }
+
+    public class DeviceModel
+    {
+        public bool Heartbeat { get; set; }
+        public string ComputerName { get; set; }
+        public string CurrentUser { get; set; }
+        public double DriveSize { get; set; }
+        public double FreeSpace { get; set; }
+        public DateTime LastReboot { get; set; }
+        public string Manufacturer { get; set; }
+        public string Model { get; set; }
+        public string OS { get; set; }
+    }
 }
-If you wanted to skip the dictionary step and deserialize straight into a class that has an Output property, you could do:
-
-csharp
-Copy
-Edit
-public class PowerShellResponse<T>
-{
-    [JsonPropertyName("action")]
-    public string Action { get; set; }
-
-    [JsonPropertyName("success")]
-    public bool Success { get; set; }
-
-    [JsonPropertyName("output")]
-    public Dictionary<string, T> Output { get; set; }
-}
-Then your T could be your actual device model:
-
-csharp
-Copy
-Edit
-public class DeviceModel
-{
-    [JsonPropertyName("computername")]
-    public string ComputerName { get; set; }
-
-    [JsonPropertyName("currentuser")]
-    public string CurrentUser { get; set; }
-
-    [JsonPropertyName("manufacturer")]
-    public string Manufacturer { get; set; }
-
-    [JsonPropertyName("lastreboot")]
-    public DateTime LastReboot { get; set; }
-
-    [JsonPropertyName("drivesize")]
-    public double DriveSize { get; set; }
-
-    [JsonPropertyName("freespace")]
-    public double FreeSpace { get; set; }
-}
-Deserialization now becomes:
-csharp
-Copy
-Edit
-var psResponse = JsonSerializer.Deserialize<PowerShellResponse<DeviceModel>>(jsonString);
-
-// Access strongly-typed devices directly
-var devices = psResponse.Output.Values.OrderBy(d => d.ComputerName).ToList();
