@@ -1,87 +1,63 @@
+Example in your context
+Right now your PowerShell JSON looks like:
+
+json
+Copy
+Edit
 {
   "action": "GetSocPcInfo",
   "success": true,
   "output": {
-    "PC-1": {
-      "computername": "PC-1",
-      "currentuser": "User1",
-      "manufacturer": "Dell",
-      "lastreboot": "2025-08-08T12:34:56",
-      ...
-    },
-    "PC-2": { ... }
+    "PC-1": { "computername": "PC-1", "currentuser": "User1" },
+    "PC-2": { "computername": "PC-2", "currentuser": "User2" }
   }
 }
-2️⃣ The matching C# model
-First, match the JSON exactly:
+If you wanted to skip the dictionary step and deserialize straight into a class that has an Output property, you could do:
 
 csharp
 Copy
 Edit
-public class PowerShellResponse
+public class PowerShellResponse<T>
 {
+    [JsonPropertyName("action")]
     public string Action { get; set; }
+
+    [JsonPropertyName("success")]
     public bool Success { get; set; }
-    public Dictionary<string, Dictionary<string, object>> Output { get; set; }
+
+    [JsonPropertyName("output")]
+    public Dictionary<string, T> Output { get; set; }
 }
-This gives you a generic representation of each device’s details.
-
-3️⃣ Deserialize into your intermediate model
-csharp
-Copy
-Edit
-var psResponse = JsonSerializer.Deserialize<PowerShellResponse>(jsonString);
-Now you have psResponse.Output as:
-
-csharp
-Copy
-Edit
-Dictionary<string, Dictionary<string, object>>
-4️⃣ Map into your custom model
-Let’s say your custom model is:
+Then your T could be your actual device model:
 
 csharp
 Copy
 Edit
 public class DeviceModel
 {
+    [JsonPropertyName("computername")]
     public string ComputerName { get; set; }
+
+    [JsonPropertyName("currentuser")]
     public string CurrentUser { get; set; }
+
+    [JsonPropertyName("manufacturer")]
     public string Manufacturer { get; set; }
+
+    [JsonPropertyName("lastreboot")]
     public DateTime LastReboot { get; set; }
+
+    [JsonPropertyName("drivesize")]
     public double DriveSize { get; set; }
+
+    [JsonPropertyName("freespace")]
     public double FreeSpace { get; set; }
 }
-Here’s how to map it:
-
+Deserialization now becomes:
 csharp
 Copy
 Edit
-var devices = psResponse.Output
-    .Select(kvp => new DeviceModel
-    {
-        ComputerName = kvp.Value["computername"]?.ToString(),
-        CurrentUser = kvp.Value["currentuser"]?.ToString(),
-        Manufacturer = kvp.Value["manufacturer"]?.ToString(),
-        LastReboot = DateTime.TryParse(kvp.Value["lastreboot"]?.ToString(), out var reboot) ? reboot : DateTime.MinValue,
-        DriveSize = double.TryParse(kvp.Value["drivesize"]?.ToString(), out var size) ? size : 0,
-        FreeSpace = double.TryParse(kvp.Value["freespace"]?.ToString(), out var free) ? free : 0
-    })
-    .OrderBy(d => d.ComputerName)
-    .ToList();
-5️⃣ Why your .SelectMany() approach failed
-If you start with psResponse.Output and do:
+var psResponse = JsonSerializer.Deserialize<PowerShellResponse<DeviceModel>>(jsonString);
 
-csharp
-Copy
-Edit
-.SelectMany(dict => dict)
-You’re actually flattening the outer dictionary into KeyValuePairs, which isn’t the same as iterating over devices.
-That would give you a list of both device names and device property dictionaries mixed together — not what you want.
-
-Instead, you want:
-
-.Select(kvp => new CustomObject { ... }) directly on the outer dictionary (Output).
-
-Map each kvp.Value (inner dictionary of props) to your model properties.
-
+// Access strongly-typed devices directly
+var devices = psResponse.Output.Values.OrderBy(d => d.ComputerName).ToList();
