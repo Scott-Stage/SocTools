@@ -1,14 +1,18 @@
 <MudTd>
-            <MudTable Dense="true" Bordered="false" Hover="false">
-                <HeaderContent>
-                    <MudTh>Username</MudTh>
-                    <MudTh>Session</MudTh>
-                    <MudTh>State</MudTh>
-                </HeaderContent>
-                <RowTemplate>
-                    <MudTd>@context.CurrentUser</MudTd>
-                    <MudTd>@context.SessionId</MudTd>
-                    <MudTd>@context.SessionState</MudTd>
-                </RowTemplate>
-            </MudTable>
-        </MudTd>
+    <table class="mud-table-root mud-table-dense">
+        <thead>
+            <tr>
+                <th>User</th>
+                <th>Session ID</th>
+                <th>State</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>@context.CurrentUser</td>
+                <td>@context.SessionId</td>
+                <td>@context.SessionState</td>
+            </tr>
+        </tbody>
+    </table>
+</MudTd>
