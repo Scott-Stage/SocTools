@@ -1,15 +1,94 @@
-<MudDropContainer T="DeviceModel"
-                  Items="@devices"
-                  ItemDropped="@(async (MudItemDropInfo<DeviceModel> info) => await OnRowDropped(info))">
-    <ChildContent>
-        <MudDropZone T="DeviceModel" Identifier="rowZone" AllowReorder="true" />
-    </ChildContent>
+<MudPaper Class="p-4" Elevation="3">
+    <MudStack Spacing="2">
+        <!-- Header: Status + Hostname -->
+        <MudStack Row AlignItems="Center" Spacing="1" Justify="SpaceBetween">
+            <MudStack Row AlignItems="Center" Spacing="1">
+                @if (Online)
+                {
+                    <MudChip Color="Color.Success" StartIcon="@Icons.Material.Filled.Circle">Online</MudChip>
+                }
+                else
+                {
+                    <MudChip Color="Color.Error" StartIcon="@Icons.Material.Filled.Circle">Offline</MudChip>
+                }
+                <MudText Typo="Typo.h6">@Hostname</MudText>
+            </MudStack>
+            <MudText Typo="Typo.caption" Color="Color.Secondary">@NowLocal.ToString("g")</MudText>
+        </MudStack>
 
-    <ItemRenderer Context="device">
-        <MudPaper Class="d-flex justify-space-between pa-2">
-            <div>@device.Hostname</div>
-            <div>@(device.Online ? "Online" : "Offline")</div>
-        </MudPaper>
-    </ItemRenderer>
-</MudDropContainer>
+        <MudDivider />
 
+        <!-- Key facts -->
+        <MudGrid>
+            <MudItem xs="12" sm="6" md="3">
+                <MudStack Spacing="0.5">
+                    <MudText Typo="Typo.overline">IPv4</MudText>
+                    <MudText>@(IPv4 ?? "—")</MudText>
+                </MudStack>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="3">
+                <MudStack Spacing="0.5">
+                    <MudText Typo="Typo.overline">Last Reboot</MudText>
+                    <MudText>
+                        @((LastRebootUtc?.ToLocalTime().ToString("g")) ?? "—")
+                        @if (LastRebootUtc is not null)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">(@UptimeText)</MudText>
+                        }
+                    </MudText>
+                </MudStack>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="3">
+                <MudStack Spacing="0.5">
+                    <MudText Typo="Typo.overline">OS</MudText>
+                    <MudText>@(OS ?? "—")</MudText>
+                </MudStack>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="3">
+                <MudStack Spacing="0.5">
+                    <MudText Typo="Typo.overline">Model</MudText>
+                    <MudText>@Model @if(!string.IsNullOrWhiteSpace(Manufacturer)){<text>— @Manufacturer</text>}</MudText>
+                </MudStack>
+            </MudItem>
+        </MudGrid>
+
+        <!-- App versions -->
+        <MudStack>
+            <MudText Typo="Typo.overline">Application Versions</MudText>
+            <MudStack Row Spacing="1" Wrap="Wrap">
+                <MudChip Variant="Variant.Outlined" Color="Color.Info">App A: @(AppVersionA ?? "—")</MudChip>
+                <MudChip Variant="Variant.Outlined" Color="Color.Info">App B: @(AppVersionB ?? "—")</MudChip>
+                <MudChip Variant="Variant.Outlined" Color="Color.Info">App C: @(AppVersionC ?? "—")</MudChip>
+            </MudStack>
+        </MudStack>
+
+        <!-- Optional capacity (shown only if values provided) -->
+        @if (DriveSizeGb is not null && FreeSpaceGb is not null && DriveSizeGb > 0)
+        {
+            <MudStack>
+                <MudText Typo="Typo.overline">Storage</MudText>
+                <MudProgressLinear Value="@UsedPercent" Color="@(UsedPercent >= 80 ? Color.Error : UsedPercent >= 60 ? Color.Warning : Color.Success)" />
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Used @((DriveSizeGb - FreeSpaceGb).Value.ToString("0")) GB / @DriveSizeGb.Value.ToString("0") GB (@UsedPercent.ToString("0")%)
+                </MudText>
+            </MudStack>
+        }
+
+        @if (MemoryGb is not null && MemoryGb > 0)
+        {
+            <MudStack>
+                <MudText Typo="Typo.overline">Memory</MudText>
+                <MudText>@MemoryGb.Value.ToString("0") GB</MudText>
+            </MudStack>
+        }
+
+        <!-- Notes / extras -->
+        @if (!string.IsNullOrWhiteSpace(Notes))
+        {
+            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">@Notes</MudAlert>
+        }
+    </MudStack>
+</MudPaper>
