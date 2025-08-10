@@ -1,101 +1,122 @@
-Got it — so you basically want a **dynamic component rendering** setup inside your MudBlazor **dashboard with drop zones**, where:
+Alright — let’s build you a **working dynamic MudDrop dashboard** where users can add `<SocPcInfoComponent>` blocks and drag them around.
 
-1. The user clicks “Add Device” (or drags one in).
-2. That action adds a `SocPcInfoComponent` instance to the layout.
-3. The component runs its own internal logic for the specific device it represents.
+I’ll break it into **3 parts**:
 
-Here’s how you could approach this:
+1. **Data model** for dashboard items
+2. **Dashboard page** with `MudDropContainer`
+3. **Component rendering (`SocPcInfoComponent`)**
 
 ---
 
-## 1. Make `SocPcInfoComponent` Accept Parameters
+## 1️⃣ Data Model — `DashboardItem.cs`
 
-That way you can pass the device details when rendering it dynamically.
-
-```razor
-@code {
-    [Parameter] public string DeviceId { get; set; }
-    [Parameter] public DeviceModel Device { get; set; }
-
-    protected override async Task OnInitializedAsync()
-    {
-        // Complex logic for this specific device
-        // Example: call a service to get extra details
-        if (!string.IsNullOrEmpty(DeviceId))
-        {
-            Device = await DeviceService.GetDeviceAsync(DeviceId);
-        }
-    }
+```csharp
+public class DashboardItem
+{
+    public string Id { get; set; }           // Unique ID for tracking order
+    public string Title { get; set; }        // Optional display name
+    public Type ComponentType { get; set; }  // Component to render
+    public Dictionary<string, object> Parameters { get; set; } = new();
 }
 ```
 
 ---
 
-## 2. Maintain a List of Dashboard Items in the Parent
-
-The dashboard should store a list of items to render.
-Each item could have a `ComponentType` and any needed parameters.
+## 2️⃣ Dashboard Page — `Dashboard.razor`
 
 ```razor
-@using Microsoft.AspNetCore.Components.Rendering
+@page "/dashboard"
+@using MudBlazor
+@using MudBlazor.Utilities
+@using YourAppNamespace.Components  <!-- Namespace where SocPcInfoComponent lives -->
 
-<MudDropContainer Items="@dashboardItems" ItemDropped="@OnItemDropped">
-    <ItemTemplate Context="item">
-        <DynamicComponent Type="@item.ComponentType" Parameters="@item.Parameters" />
-    </ItemTemplate>
-</MudDropContainer>
+<MudContainer MaxWidth="false">
+    <MudPaper Class="pa-4">
+        <MudButton Variant="Filled" Color="Primary" OnClick="AddDevice">
+            Add Device
+        </MudButton>
 
-<MudButton OnClick="@AddDeviceWidget">Add Device</MudButton>
+        <MudDropContainer Items="@dashboardItems"
+                          ItemDropped="@(dropInfo => OnItemDropped(dropInfo))"
+                          RowSpacing="20"
+                          ColumnSpacing="20"
+                          ItemsPerRow="3">
+            <ItemTemplate Context="item">
+                <MudPaper Class="pa-4">
+                    <DynamicComponent Type="@item.ComponentType" Parameters="@item.Parameters" />
+                </MudPaper>
+            </ItemTemplate>
+        </MudDropContainer>
+    </MudPaper>
+</MudContainer>
 
 @code {
     private List<DashboardItem> dashboardItems = new();
 
-    private void AddDeviceWidget()
+    private void AddDevice()
     {
         dashboardItems.Add(new DashboardItem
         {
+            Id = Guid.NewGuid().ToString(),
+            Title = "Device Info",
             ComponentType = typeof(SocPcInfoComponent),
             Parameters = new Dictionary<string, object>
             {
-                { "DeviceId", "sys123456" } // example
+                { "DeviceId", Guid.NewGuid().ToString() } // Pass device-specific data
             }
         });
     }
 
     private void OnItemDropped(MudItemDropInfo<DashboardItem> dropInfo)
     {
-        // Rearrange dashboardItems based on dropInfo
-    }
-
-    public class DashboardItem
-    {
-        public Type ComponentType { get; set; }
-        public Dictionary<string, object> Parameters { get; set; } = new();
+        // Simple reorder logic
+        var item = dropInfo.Item;
+        dashboardItems.Remove(item);
+        dashboardItems.Insert(dropInfo.Index, item);
     }
 }
 ```
 
-Here, `<DynamicComponent>` is a Blazor built-in that renders components **at runtime** from a `Type`. This allows you to insert any custom component into your MudDrop zones.
+---
+
+## 3️⃣ Example Device Component — `SocPcInfoComponent.razor`
+
+```razor
+@code {
+    [Parameter] public string DeviceId { get; set; }
+
+    private string status;
+    private string hostName;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Simulate loading device data from your PowerShell service
+        await Task.Delay(300); 
+        status = "Online";
+        hostName = $"Host-{DeviceId[..5]}";
+    }
+}
+
+<MudPaper Class="pa-3">
+    <MudText Typo="Typo.h6">@hostName</MudText>
+    <MudText>Status: @status</MudText>
+</MudPaper>
+```
 
 ---
 
-## 3. How It Works
+✅ **How it works:**
 
-* **User clicks "Add Device"** → `AddDeviceWidget()` pushes a new dashboard item with type `SocPcInfoComponent`.
-* **Parameters** (like `DeviceId`) get passed into that component.
-* **MudDropContainer** shows them in whatever drop zone layout the user arranges.
-* You can persist `dashboardItems` in local storage or a DB to remember each user’s layout.
-
----
-
-## 4. Benefits of This Approach
-
-* Each `SocPcInfoComponent` is self-contained — it can run complex logic for *just that device* without bloating the dashboard code.
-* Works with multiple widget types, not just devices (charts, logs, metrics, etc.).
-* Easily persists user layout and restores on load.
+* Clicking **"Add Device"** adds a new `SocPcInfoComponent` to the list.
+* The `DynamicComponent` renders it, passing a `DeviceId` parameter.
+* You can drag and drop items inside the `MudDropContainer` to reorder.
 
 ---
 
-If you want, I can write you a **full working MudDrop dashboard example** with the `SocPcInfoComponent` parameterized and multiple widget types, so the user can truly customize their dashboard layout and it persists. That would make adding device widgets seamless.
+If you want, I can extend this so that:
 
-Do you want me to put that full example together?
+* The layout **persists** to local storage or a database
+* `SocPcInfoComponent` actually calls your **PowerShell service** and shows real data
+* Users can **remove** dashboard items
+
+Do you want me to make it persistent and wired to your PowerShell data next?
