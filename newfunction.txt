@@ -1,32 +1,16 @@
-Option A — Recommended: explicit typed async lambda
-This is the simplest and most robust approach:
-
-razor
-Copy
-Edit
-<MudDropContainer T="DashboardItem"
-                  Items="@dashboardItems"
-                  ItemDropped="@(async (MudItemDropInfo<DashboardItem> info) => await OnItemDropped(info))"
-                  Class="d-flex flex-wrap">
-    ...
-</MudDropContainer>
-And in @code:
-
-csharp
-Copy
-Edit
 private async Task OnItemDropped(MudItemDropInfo<DashboardItem> info)
 {
-    if (info == null) return;
-    var item = info.Item;
-    var oldIndex = dashboardItems.IndexOf(item);
-    if (oldIndex >= 0) dashboardItems.RemoveAt(oldIndex);
-    var insertIndex = Math.Max(0, Math.Min(info.Index, dashboardItems.Count));
-    dashboardItems.Insert(insertIndex, item);
+    var item = info.Item;  // The thing that got dragged
+    var newIndex = info.Index; // The position it was dropped into
+
+    // Remove old position
+    dashboardItems.Remove(item);
+
+    // Insert at new position (safely)
+    dashboardItems.Insert(
+        Math.Min(newIndex, dashboardItems.Count),
+        item
+    );
+
     await InvokeAsync(StateHasChanged);
 }
-Why this fixes things:
-
-The lambda explicitly types info as MudItemDropInfo<DashboardItem>, so Razor/compiler knows the delegate type.
-
-ItemDropped receives an EventCallback<MudItemDropInfo<DashboardItem>> created from the lambda.
