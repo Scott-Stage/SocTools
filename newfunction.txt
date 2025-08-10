@@ -1,18 +1,101 @@
-<MudTd>
-    <table class="mud-table-root mud-table-dense">
-        <thead>
-            <tr>
-                <th>User</th>
-                <th>Session ID</th>
-                <th>State</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td>@context.CurrentUser</td>
-                <td>@context.SessionId</td>
-                <td>@context.SessionState</td>
-            </tr>
-        </tbody>
-    </table>
-</MudTd>
+Got it — so you basically want a **dynamic component rendering** setup inside your MudBlazor **dashboard with drop zones**, where:
+
+1. The user clicks “Add Device” (or drags one in).
+2. That action adds a `SocPcInfoComponent` instance to the layout.
+3. The component runs its own internal logic for the specific device it represents.
+
+Here’s how you could approach this:
+
+---
+
+## 1. Make `SocPcInfoComponent` Accept Parameters
+
+That way you can pass the device details when rendering it dynamically.
+
+```razor
+@code {
+    [Parameter] public string DeviceId { get; set; }
+    [Parameter] public DeviceModel Device { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Complex logic for this specific device
+        // Example: call a service to get extra details
+        if (!string.IsNullOrEmpty(DeviceId))
+        {
+            Device = await DeviceService.GetDeviceAsync(DeviceId);
+        }
+    }
+}
+```
+
+---
+
+## 2. Maintain a List of Dashboard Items in the Parent
+
+The dashboard should store a list of items to render.
+Each item could have a `ComponentType` and any needed parameters.
+
+```razor
+@using Microsoft.AspNetCore.Components.Rendering
+
+<MudDropContainer Items="@dashboardItems" ItemDropped="@OnItemDropped">
+    <ItemTemplate Context="item">
+        <DynamicComponent Type="@item.ComponentType" Parameters="@item.Parameters" />
+    </ItemTemplate>
+</MudDropContainer>
+
+<MudButton OnClick="@AddDeviceWidget">Add Device</MudButton>
+
+@code {
+    private List<DashboardItem> dashboardItems = new();
+
+    private void AddDeviceWidget()
+    {
+        dashboardItems.Add(new DashboardItem
+        {
+            ComponentType = typeof(SocPcInfoComponent),
+            Parameters = new Dictionary<string, object>
+            {
+                { "DeviceId", "sys123456" } // example
+            }
+        });
+    }
+
+    private void OnItemDropped(MudItemDropInfo<DashboardItem> dropInfo)
+    {
+        // Rearrange dashboardItems based on dropInfo
+    }
+
+    public class DashboardItem
+    {
+        public Type ComponentType { get; set; }
+        public Dictionary<string, object> Parameters { get; set; } = new();
+    }
+}
+```
+
+Here, `<DynamicComponent>` is a Blazor built-in that renders components **at runtime** from a `Type`. This allows you to insert any custom component into your MudDrop zones.
+
+---
+
+## 3. How It Works
+
+* **User clicks "Add Device"** → `AddDeviceWidget()` pushes a new dashboard item with type `SocPcInfoComponent`.
+* **Parameters** (like `DeviceId`) get passed into that component.
+* **MudDropContainer** shows them in whatever drop zone layout the user arranges.
+* You can persist `dashboardItems` in local storage or a DB to remember each user’s layout.
+
+---
+
+## 4. Benefits of This Approach
+
+* Each `SocPcInfoComponent` is self-contained — it can run complex logic for *just that device* without bloating the dashboard code.
+* Works with multiple widget types, not just devices (charts, logs, metrics, etc.).
+* Easily persists user layout and restores on load.
+
+---
+
+If you want, I can write you a **full working MudDrop dashboard example** with the `SocPcInfoComponent` parameterized and multiple widget types, so the user can truly customize their dashboard layout and it persists. That would make adding device widgets seamless.
+
+Do you want me to put that full example together?
