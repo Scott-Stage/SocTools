@@ -1,51 +1,62 @@
-Alright — let’s build you a **working dynamic MudDrop dashboard** where users can add `<SocPcInfoComponent>` blocks and drag them around.
+Thanks — you were right to call me out. I rethought it and rebuilt a *working* approach that matches MudBlazor’s actual DropContainer/DropZone patterns (including `ItemRenderer`, `T` type params, and the correct `ItemDropped` signature).
 
-I’ll break it into **3 parts**:
-
-1. **Data model** for dashboard items
-2. **Dashboard page** with `MudDropContainer`
-3. **Component rendering (`SocPcInfoComponent`)**
+Paste these files into your project and you should get a draggable dashboard where clicking **Add Device** inserts a `SocPcInfoComponent` widget and you can drag/reorder it. I included `StateHasChanged()` calls where useful (MudBlazor sometimes needs an explicit refresh when the list is changed in code).
 
 ---
 
-## 1️⃣ Data Model — `DashboardItem.cs`
+## 1) `DashboardItem.cs`
 
 ```csharp
 public class DashboardItem
 {
-    public string Id { get; set; }           // Unique ID for tracking order
-    public string Title { get; set; }        // Optional display name
-    public Type ComponentType { get; set; }  // Component to render
+    public string Id { get; set; } = default!;
+    public string Title { get; set; } = default!;
+    public Type ComponentType { get; set; } = default!;
     public Dictionary<string, object> Parameters { get; set; } = new();
 }
 ```
 
 ---
 
-## 2️⃣ Dashboard Page — `Dashboard.razor`
+## 2) `Dashboard.razor` (the drag/drop page)
 
 ```razor
 @page "/dashboard"
 @using MudBlazor
-@using MudBlazor.Utilities
-@using YourAppNamespace.Components  <!-- Namespace where SocPcInfoComponent lives -->
+@using Microsoft.AspNetCore.Components
+@using System.Collections.Generic
+@using YourAppNamespace.Components   @* update namespace for SocPcInfoComponent *@
 
 <MudContainer MaxWidth="false">
     <MudPaper Class="pa-4">
-        <MudButton Variant="Filled" Color="Primary" OnClick="AddDevice">
-            Add Device
-        </MudButton>
 
-        <MudDropContainer Items="@dashboardItems"
-                          ItemDropped="@(dropInfo => OnItemDropped(dropInfo))"
-                          RowSpacing="20"
-                          ColumnSpacing="20"
-                          ItemsPerRow="3">
-            <ItemTemplate Context="item">
-                <MudPaper Class="pa-4">
-                    <DynamicComponent Type="@item.ComponentType" Parameters="@item.Parameters" />
-                </MudPaper>
-            </ItemTemplate>
+        <MudStack Row="true" Spacing="2" AlignItems="Center" Class="mb-4">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="AddDevice">Add Device</MudButton>
+            <MudButton Variant="Variant.Outlined" OnClick="SaveLayout">Save layout (example)</MudButton>
+        </MudStack>
+
+        <!-- Drop container: T must be the item type -->
+        <MudDropContainer T="DashboardItem"
+                          Items="@dashboardItems"
+                          ItemDropped="@(async info => await OnItemDropped(info))"
+                          Class="d-flex flex-wrap">
+            <!-- a single zone for simplicity; Identifier is arbitrary -->
+            <ChildContent>
+                <MudDropZone T="DashboardItem" Identifier="main" AllowReorder="true" Class="d-flex flex-wrap" />
+            </ChildContent>
+
+            <!-- ItemRenderer defines how each DashboardItem is rendered -->
+            <ItemRenderer Context="item">
+                <div class="m-2" style="width:320px">
+                    <MudPaper Class="pa-2">
+                        <MudStack>
+                            <MudText Typo="Typo.subtitle1">@item.Title</MudText>
+                            <!-- render the component dynamically and pass parameters -->
+                            <DynamicComponent Type="@item.ComponentType" Parameters="@item.Parameters" />
+                        </MudStack>
+                    </MudPaper>
+                </div>
+            </ItemRenderer>
         </MudDropContainer>
     </MudPaper>
 </MudContainer>
@@ -55,68 +66,115 @@ public class DashboardItem
 
     private void AddDevice()
     {
+        var id = Guid.NewGuid().ToString();
         dashboardItems.Add(new DashboardItem
         {
-            Id = Guid.NewGuid().ToString(),
-            Title = "Device Info",
+            Id = id,
+            Title = $"Device {dashboardItems.Count + 1}",
             ComponentType = typeof(SocPcInfoComponent),
             Parameters = new Dictionary<string, object>
             {
-                { "DeviceId", Guid.NewGuid().ToString() } // Pass device-specific data
+                ["DeviceId"] = id
             }
         });
+
+        // Make sure UI updates immediately
+        StateHasChanged();
     }
 
-    private void OnItemDropped(MudItemDropInfo<DashboardItem> dropInfo)
+    // ItemDropped receives MudItemDropInfo<T>
+    private async Task OnItemDropped(MudItemDropInfo<DashboardItem> info)
     {
-        // Simple reorder logic
-        var item = dropInfo.Item;
-        dashboardItems.Remove(item);
-        dashboardItems.Insert(dropInfo.Index, item);
+        if (info == null) return;
+
+        // info.Item is the item that was dropped
+        // info.Index is the index within the zone where it was dropped
+        // In this simple single-zone example we re-order the list to match new index
+        var item = info.Item;
+        if (item == null) return;
+
+        // Remove old occurrence (if present) and insert at the new index
+        var oldIndex = dashboardItems.IndexOf(item);
+        if (oldIndex >= 0)
+            dashboardItems.RemoveAt(oldIndex);
+
+        var insertIndex = Math.Max(0, Math.Min(info.Index, dashboardItems.Count));
+        dashboardItems.Insert(insertIndex, item);
+
+        // ensure UI refresh
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private Task SaveLayout()
+    {
+        // Example: persist 'dashboardItems' (ids + parameters) to DB or local storage
+        return Task.CompletedTask;
     }
 }
 ```
 
+**Notes about the Razor:**
+
+* `MudDropContainer T="DashboardItem"` and `MudDropZone T="DashboardItem"` are required; they tell MudBlazor the generic item type.
+* `ChildContent` contains one or more `MudDropZone` elements. If you want multiple zones (e.g., columns), add more `MudDropZone` with different `Identifier` values and use `ItemsSelector` to control which items belong to which zone.
+* `ItemRenderer` is a `RenderFragment<T>` — it renders each item (here we render a `DynamicComponent` in a `MudPaper`).
+* `ItemDropped="@(async info => await OnItemDropped(info))"` passes the **MudBlazor-provided** `MudItemDropInfo<DashboardItem>` to your handler.
+
 ---
 
-## 3️⃣ Example Device Component — `SocPcInfoComponent.razor`
+## 3) `SocPcInfoComponent.razor` (example widget that receives a device id)
 
 ```razor
-@code {
-    [Parameter] public string DeviceId { get; set; }
+@using Microsoft.AspNetCore.Components
+@using MudBlazor
 
-    private string status;
-    private string hostName;
+<MudPaper Class="pa-3">
+    <MudText Typo="Typo.h6">@(_hostName ?? "Loading...")</MudText>
+    <MudText Typo="Typo.body2">DeviceId: @DeviceId</MudText>
+    <MudText Typo="Typo.body2">Status: @_status</MudText>
+</MudPaper>
+
+@code {
+    [Parameter] public string DeviceId { get; set; } = default!;
+
+    private string? _hostName;
+    private string _status = "Unknown";
 
     protected override async Task OnInitializedAsync()
     {
-        // Simulate loading device data from your PowerShell service
-        await Task.Delay(300); 
-        status = "Online";
-        hostName = $"Host-{DeviceId[..5]}";
+        // Example: your real component would call a service to load details for DeviceId
+        await Task.Delay(200); // simulate work
+        _hostName = $"Host-{DeviceId[..5]}";
+        _status = "Online";
     }
 }
-
-<MudPaper Class="pa-3">
-    <MudText Typo="Typo.h6">@hostName</MudText>
-    <MudText>Status: @status</MudText>
-</MudPaper>
 ```
 
 ---
 
-✅ **How it works:**
+## Why your previous code failed and what I changed
 
-* Clicking **"Add Device"** adds a new `SocPcInfoComponent` to the list.
-* The `DynamicComponent` renders it, passing a `DeviceId` parameter.
-* You can drag and drop items inside the `MudDropContainer` to reorder.
+* MudBlazor’s drop system expects `MudDropContainer` + `MudDropZone` structure (not just `MudDropContainer` + inline item rendering). The *ItemRenderer* is the correct way to render items.
+* The `ItemDropped` callback provides a strongly-typed `MudItemDropInfo<T>`; I used an async lambda `@(async info => await OnItemDropped(info))` to create a proper `EventCallback` rather than trying to pass a method group that didn’t match.
+* Reordering must update the same list instance; I remove the old instance and insert it at the new index. (MudBlazor uses item identity, so keep the same objects in the list — don’t recreate new objects during reorder.)
 
 ---
 
-If you want, I can extend this so that:
+## Troubleshooting tips if it still misbehaves
 
-* The layout **persists** to local storage or a database
-* `SocPcInfoComponent` actually calls your **PowerShell service** and shows real data
-* Users can **remove** dashboard items
+1. **MudBlazor version** — APIs changed between major versions. This example targets recent MudBlazor (v6/7+). If you updated and `ItemDropped` never fires, check release notes or try `AllowReorder` on the zone.
+2. **Item identity** — ensure the list contains the same object instances used by the container. If you recreate/clone items before Insert, drag-drop may act funky.
+3. **UI not refreshing** — call `StateHasChanged()` (I added it after AddDevice and after reordering).
+4. **Multiple zones** — if you add more zones, use `ItemsSelector` on container or `Identifier`s on drop zones to control where items are allowed.
+5. **Nested complex components** — if the dragged visual looks wrong (snapshot problem), render a simpler preview inside ItemRenderer or provide a `DragHandle` UI with CSS to reduce snapshot area.
 
-Do you want me to make it persistent and wired to your PowerShell data next?
+---
+
+If you want I can:
+
+* adapt this to multiple columns/zones (e.g., “Left / Right / Widgets”),
+* persist layout to localStorage or a DB,
+* add a “remove” button inside each widget,
+* or wire `SocPcInfoComponent` to your `DeviceService`/PowerShell handler so it loads real telemetry.
+
+Which would you like next?
