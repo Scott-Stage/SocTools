@@ -1,91 +1,15 @@
-@page "/admin"
-@using MudBlazor
-@using Microsoft.AspNetCore.Components
-@using System.Collections.Generic
+<MudDropContainer T="DeviceModel"
+                  Items="@devices"
+                  ItemDropped="@(async (MudItemDropInfo<DeviceModel> info) => await OnRowDropped(info))">
+    <ChildContent>
+        <MudDropZone T="DeviceModel" Identifier="rowZone" AllowReorder="true" />
+    </ChildContent>
 
-@* If your component is in another namespace, add it: *@
-@using YourAppNamespace.Components
+    <ItemRenderer Context="device">
+        <MudPaper Class="d-flex justify-space-between pa-2">
+            <div>@device.Hostname</div>
+            <div>@(device.Online ? "Online" : "Offline")</div>
+        </MudPaper>
+    </ItemRenderer>
+</MudDropContainer>
 
-<MudContainer MaxWidth="false">
-  <MudPaper Class="pa-4">
-
-    <MudStack Row="true" Spacing="2" AlignItems="Center" Class="mb-4">
-      <MudTextField @bind-Value="_newHostname" Label="Hostname" Immediate="true" />
-      <MudButton Color="Color.Primary" OnClick="AddDevice">Add device</MudButton>
-    </MudStack>
-
-    <MudDropContainer T="DashboardItem"
-                      Items="@_items"
-                      ItemDropped="@(async (MudItemDropInfo<DashboardItem> info) => await OnItemDropped(info))"
-                      Class="d-flex flex-wrap">
-
-      <ChildContent>
-        <MudDropZone T="DashboardItem"
-                     Identifier="main"
-                     AllowReorder="true"
-                     Class="d-flex flex-wrap" />
-      </ChildContent>
-
-      <ItemRenderer Context="item">
-        @* Always give Blazor a stable key so the component instance sticks *@
-        <div class="m-2" style="width:340px" @key="item.Id">
-          <MudPaper Class="pa-2">
-            <MudStack Spacing="1">
-              <MudText Typo="Typo.subtitle1">@item.Title</MudText>
-              <MudText Color="Color.Secondary">@item.Hostname</MudText>
-
-              @* If Type/namespace is wrong, nothing will render — this is the #1 pitfall *@
-              <DynamicComponent Type="@item.ComponentType"
-                                Parameters="@(new Dictionary<string, object?> { ["Hostname"] = item.Hostname })" />
-
-              <MudStack Row="true" Justify="FlexEnd">
-                <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
-                               OnClick="@(() => Remove(item))" />
-              </MudStack>
-            </MudStack>
-          </MudPaper>
-        </div>
-      </ItemRenderer>
-    </MudDropContainer>
-
-  </MudPaper>
-</MudContainer>
-
-@code {
-  private readonly List<DashboardItem> _items = new();
-  private string _newHostname = "";
-
-  private void AddDevice()
-  {
-    if (string.IsNullOrWhiteSpace(_newHostname)) return;
-
-    _items.Add(new DashboardItem {
-      Hostname = _newHostname.Trim(),
-      Title = "Device",
-      ComponentType = typeof(SingleDeviceInfoComponent) // must match actual type/namespace
-    });
-
-    _newHostname = "";
-    StateHasChanged(); // force a render in case you add async later
-  }
-
-  private void Remove(DashboardItem item)
-  {
-    _items.Remove(item);
-    StateHasChanged();
-  }
-
-  private async Task OnItemDropped(MudItemDropInfo<DashboardItem> info)
-  {
-    if (info?.Item is null) return;
-    var item = info.Item;
-
-    var oldIndex = _items.IndexOf(item);
-    if (oldIndex >= 0) _items.RemoveAt(oldIndex);
-
-    var insertIndex = Math.Max(0, Math.Min(info.IndexInZone, _items.Count));
-    _items.Insert(insertIndex, item);
-
-    await InvokeAsync(StateHasChanged);
-  }
-}
