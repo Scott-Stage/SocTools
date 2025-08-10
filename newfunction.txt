@@ -1,16 +1,231 @@
-private async Task OnItemDropped(MudItemDropInfo<DashboardItem> info)
+You got it. Here’s a clean, working pattern that lets users click **Add Device**, enter a **hostname**, and then your existing **`<SingleDeviceInfoComponent />`** is rendered in a draggable **MudDrop** dashboard. I’ve been careful about the usual Blazor/MudBlazor pitfalls (generics, event signatures, `DynamicComponent` parameters, `@key`, dialogs, and state refresh).
+
+---
+
+# Files
+
+## 1) `DashboardItem.cs`
+
+```csharp
+public class DashboardItem
 {
-    var item = info.Item;  // The thing that got dragged
-    var newIndex = info.Index; // The position it was dropped into
-
-    // Remove old position
-    dashboardItems.Remove(item);
-
-    // Insert at new position (safely)
-    dashboardItems.Insert(
-        Math.Min(newIndex, dashboardItems.Count),
-        item
-    );
-
-    await InvokeAsync(StateHasChanged);
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string Hostname { get; set; } = string.Empty;
+    public string Title { get; set; } = "Device";
+    public Type ComponentType { get; set; } = typeof(SingleDeviceInfoComponent);
 }
+```
+
+> Pitfall avoided: keep a stable `Id` per item so Blazor can diff properly. We’ll use `@key item.Id` when rendering.
+
+---
+
+## 2) `HostnameDialog.razor`
+
+A tiny dialog to prompt the user for a hostname with simple validation.
+
+```razor
+@using MudBlazor
+@inject IDialogService DialogService
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.h6" Class="mb-2">Add Device</MudText>
+        <MudTextField @bind-Value="_hostname"
+                      Label="Hostname"
+                      Immediate="true"
+                      Required="true"
+                      For="@(() => _hostname)"
+                      HelperText="e.g. sys12345"
+                      Class="mt-2"
+                      @onkeydown="@OnKeyDown" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@Cancel" Color="Color.Default" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton OnClick="@Ok" Color="Color.Primary" Disabled="@string.IsNullOrWhiteSpace(_hostname)">Add</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = default!;
+    private string _hostname = string.Empty;
+
+    private void Ok()
+    {
+        if (!string.IsNullOrWhiteSpace(_hostname))
+            MudDialog.Close(DialogResult.Ok(_hostname));
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private void OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(_hostname))
+            Ok();
+    }
+}
+```
+
+> Pitfall avoided: dialogs don’t support inputs out-of-the-box; using `IDialogService` with a small component is the most reliable way to prompt and return a value.
+
+---
+
+## 3) `AdminDashboard.razor`
+
+This is the page the user visits. It uses **MudDropContainer + MudDropZone** (correct generic `T`) and renders your `SingleDeviceInfoComponent` dynamically with a `Hostname` parameter. It also supports drag-to-reorder.
+
+```razor
+@page "/admin"
+@using MudBlazor
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Rendering
+
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+<MudContainer MaxWidth="false">
+    <MudPaper Class="pa-4">
+
+        <MudStack Row="true" Spacing="2" AlignItems="Center" Class="mb-4">
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="AddDeviceAsync">
+                Add Device
+            </MudButton>
+        </MudStack>
+
+        <!-- DRAG/DROP: The container owns the list. Use correct T everywhere. -->
+        <MudDropContainer T="DashboardItem"
+                          Items="@_items"
+                          ItemsSelector="@(zoneId => _items)"  @* single zone; all items go here *@
+                          ItemDropped="@(async (MudItemDropInfo<DashboardItem> info) => await OnItemDropped(info))"
+                          Class="d-flex flex-wrap">
+
+            <ChildContent>
+                <!-- single zone; you can add more with different Identifier values -->
+                <MudDropZone T="DashboardItem"
+                             Identifier="main"
+                             AllowReorder="true"
+                             Class="d-flex flex-wrap" />
+            </ChildContent>
+
+            <!-- How to render each item -->
+            <ItemRenderer Context="item">
+                <div class="m-2" style="width:360px">
+                    <MudPaper Class="pa-2">
+                        <MudStack Spacing="1">
+                            <MudStack Row="true" Justify="SpaceBetween" AlignItems="Center">
+                                <MudText Typo="Typo.subtitle1">@item.Title</MudText>
+                                <MudText Typo="Typo.body2" Color="Color.Secondary">@item.Hostname</MudText>
+                            </MudStack>
+
+                            <!-- Your component, rendered dynamically. Pass Hostname param. Keep a stable @key. -->
+                            <DynamicComponent @key="item.Id"
+                                              Type="@item.ComponentType"
+                                              Parameters="@(new Dictionary<string, object?>
+                                              {
+                                                  ["Hostname"] = item.Hostname
+                                              })" />
+
+                            <MudStack Row="true" Justify="FlexEnd" Spacing="1">
+                                <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                               Color="Color.Error"
+                                               Size="Size.Small"
+                                               OnClick="@(() => Remove(item))" />
+                            </MudStack>
+                        </MudStack>
+                    </MudPaper>
+                </div>
+            </ItemRenderer>
+        </MudDropContainer>
+
+    </MudPaper>
+</MudContainer>
+
+@code {
+    private readonly List<DashboardItem> _items = new();
+
+    private async Task AddDeviceAsync()
+    {
+        // Prompt for hostname via dialog
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = Dialogs.Show<HostnameDialog>("Add Device", options);
+        var result = await dialog.Result;
+
+        if (result.Canceled) return;
+
+        var hostname = result.Data as string;
+        if (string.IsNullOrWhiteSpace(hostname))
+        {
+            Snackbar.Add("Hostname is required.", Severity.Warning);
+            return;
+        }
+
+        // Optional: prevent duplicates
+        if (_items.Any(i => string.Equals(i.Hostname, hostname, StringComparison.OrdinalIgnoreCase)))
+        {
+            Snackbar.Add($"Device '{hostname}' is already on the dashboard.", Severity.Info);
+            return;
+        }
+
+        // Create item
+        _items.Add(new DashboardItem
+        {
+            Hostname = hostname,
+            Title = "Device",
+            ComponentType = typeof(SingleDeviceInfoComponent)
+        });
+
+        StateHasChanged(); // ensure render; especially if you later make this async
+    }
+
+    private void Remove(DashboardItem item)
+    {
+        _items.Remove(item);
+        StateHasChanged();
+    }
+
+    // Drag handler — use IndexInZone (not Index) in modern MudBlazor
+    private async Task OnItemDropped(MudItemDropInfo<DashboardItem> info)
+    {
+        if (info?.Item is null) return;
+
+        var item = info.Item;
+
+        // Reorder the same instance — don't recreate it (MudBlazor tracks by reference)
+        var oldIndex = _items.IndexOf(item);
+        if (oldIndex >= 0)
+            _items.RemoveAt(oldIndex);
+
+        var insertIndex = Math.Max(0, Math.Min(info.IndexInZone, _items.Count));
+        _items.Insert(insertIndex, item);
+
+        await InvokeAsync(StateHasChanged);
+    }
+}
+```
+
+---
+
+# Important notes & common pitfalls I avoided
+
+* **Generics everywhere:** `MudDropContainer T="DashboardItem"`, `MudDropZone T="DashboardItem"`, and the handler signature `OnItemDropped(MudItemDropInfo<DashboardItem> info)` must all use the **same T**.
+* **Use `IndexInZone`:** In newer MudBlazor, use `info.IndexInZone` (not `Index`) to know where to insert.
+* **Don’t recreate items during reorder:** Remove then insert the **same instance**; MudBlazor identifies the dragged item by reference.
+* **DynamicComponent parameters:** pass a `Dictionary<string, object?>` where the key matches your component’s `[Parameter]` name (`Hostname`).
+* **`@key` per widget:** `@key item.Id` ensures the `SingleDeviceInfoComponent` instance is stable and only re-renders when that item changes.
+* **Dialog input:** using a separate `HostnameDialog` component avoids tricky “input in message box” hacks and reliably returns a value.
+* **Services registered:** ensure you have MudBlazor wired up once in `Program.cs`:
+
+  ```csharp
+  builder.Services.AddMudServices();
+  ```
+
+  and include MudBlazor CSS/JS in `_Host.cshtml`:
+
+  ```html
+  <link href="_content/MudBlazor/MudBlazor.min.css" rel="stylesheet" />
+  <script src="_content/MudBlazor/MudBlazor.min.js"></script>
+  ```
+
+---
+
+If you want multi-column zones (e.g., Left/Right), we can add more `<MudDropZone>`s with different `Identifier`s and use a quick `ItemsSelector` that filters which items go to which zone. But the above gets you the “Add Device → prompt for hostname → render your component” flow working reliably.
