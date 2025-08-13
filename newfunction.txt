@@ -1,94 +1,84 @@
-<MudPaper Class="p-4" Elevation="3">
-    <MudStack Spacing="2">
-        <!-- Header: Status + Hostname -->
-        <MudStack Row AlignItems="Center" Spacing="1" Justify="SpaceBetween">
-            <MudStack Row AlignItems="Center" Spacing="1">
-                @if (Online)
-                {
-                    <MudChip Color="Color.Success" StartIcon="@Icons.Material.Filled.Circle">Online</MudChip>
-                }
-                else
-                {
-                    <MudChip Color="Color.Error" StartIcon="@Icons.Material.Filled.Circle">Offline</MudChip>
-                }
-                <MudText Typo="Typo.h6">@Hostname</MudText>
-            </MudStack>
-            <MudText Typo="Typo.caption" Color="Color.Secondary">@NowLocal.ToString("g")</MudText>
-        </MudStack>
+1) Fixed-palette + stable hash (recommended)
+csharp
+Copy
+using System.Security.Cryptography;
+using System.Text;
 
-        <MudDivider />
+public static class AvatarColor
+{
+    // Fluent/Office-aligned swatches (names optional)
+    public static readonly (string Name, string Hex)[] Palette =
+    {
+        ("CommunicationBlue", "#0078D4"),
+        ("CyanBlue10",        "#106EBE"),
+        ("RoyalBlue",         "#3949AB"),
+        ("Indigo",            "#5C2D91"),
+        ("Purple",            "#8E44AD"),
+        ("Magenta",           "#B4009E"),
+        ("HotPink",           "#E3008C"),
+        ("Coral",             "#F7630C"),
+        ("Pumpkin",           "#CA5010"),
+        ("Rust",              "#8E562E"),
+        ("Gold",              "#FFB900"),
+        ("Lime",              "#6BB700"),
+        ("Green",             "#107C10"),
+        ("Teal",              "#038387"),
+        ("Cyan",              "#00B7C3"),
+        ("Steel",             "#7A7574"),
+        ("Platinum",          "#605E5C"),
+        ("CoolGray",          "#8A8886")
+    };
 
-        <!-- Key facts -->
-        <MudGrid>
-            <MudItem xs="12" sm="6" md="3">
-                <MudStack Spacing="0.5">
-                    <MudText Typo="Typo.overline">IPv4</MudText>
-                    <MudText>@(IPv4 ?? "—")</MudText>
-                </MudStack>
-            </MudItem>
+    public static (string name, string hex, string textHex) PickForUser(string userName)
+    {
+        if (string.IsNullOrWhiteSpace(userName))
+            return ("Default", "#7A7574", "#FFFFFF"); // steel + white
 
-            <MudItem xs="12" sm="6" md="3">
-                <MudStack Spacing="0.5">
-                    <MudText Typo="Typo.overline">Last Reboot</MudText>
-                    <MudText>
-                        @((LastRebootUtc?.ToLocalTime().ToString("g")) ?? "—")
-                        @if (LastRebootUtc is not null)
-                        {
-                            <MudText Typo="Typo.caption" Color="Color.Secondary">(@UptimeText)</MudText>
-                        }
-                    </MudText>
-                </MudStack>
-            </MudItem>
+        int idx = StableIndex(userName, Palette.Length);
+        string hex = Palette[idx].Hex;
+        string text = IdealTextOn(hex);
+        return (Palette[idx].Name, hex, text);
+    }
 
-            <MudItem xs="12" sm="6" md="3">
-                <MudStack Spacing="0.5">
-                    <MudText Typo="Typo.overline">OS</MudText>
-                    <MudText>@(OS ?? "—")</MudText>
-                </MudStack>
-            </MudItem>
+    // Stable index from SHA256 hash (works across processes/platforms)
+    private static int StableIndex(string input, int mod)
+    {
+        using var sha = SHA256.Create();
+        var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(input));
+        // use first 4 bytes as unsigned int
+        uint value = (uint)(bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24));
+        return (int)(value % (uint)mod);
+    }
 
-            <MudItem xs="12" sm="6" md="3">
-                <MudStack Spacing="0.5">
-                    <MudText Typo="Typo.overline">Model</MudText>
-                    <MudText>@Model @if(!string.IsNullOrWhiteSpace(Manufacturer)){<text>— @Manufacturer</text>}</MudText>
-                </MudStack>
-            </MudItem>
-        </MudGrid>
+    // Return #FFFFFF or #1F1F1F based on WCAG-ish contrast
+    public static string IdealTextOn(string bgHex)
+    {
+        (double r, double g, double b) = HexToLinearRgb(bgHex);
+        double L = 0.2126*r + 0.7152*g + 0.0722*b; // relative luminance
+        // Contrast vs white(1.0) and near-black(~0.015)
+        double contrastWhite = (1.0 + 0.05) / (L + 0.05);
+        double contrastBlack = (L + 0.05) / (0.0 + 0.05);
+        return contrastWhite >= contrastBlack ? "#FFFFFF" : "#1F1F1F";
+    }
 
-        <!-- App versions -->
-        <MudStack>
-            <MudText Typo="Typo.overline">Application Versions</MudText>
-            <MudStack Row Spacing="1" Wrap="Wrap">
-                <MudChip Variant="Variant.Outlined" Color="Color.Info">App A: @(AppVersionA ?? "—")</MudChip>
-                <MudChip Variant="Variant.Outlined" Color="Color.Info">App B: @(AppVersionB ?? "—")</MudChip>
-                <MudChip Variant="Variant.Outlined" Color="Color.Info">App C: @(AppVersionC ?? "—")</MudChip>
-            </MudStack>
-        </MudStack>
+    private static (double r, double g, double b) HexToLinearRgb(string hex)
+    {
+        if (hex.StartsWith("#")) hex = hex[1..];
+        byte r8 = Convert.ToByte(hex.Substring(0, 2), 16);
+        byte g8 = Convert.ToByte(hex.Substring(2, 2), 16);
+        byte b8 = Convert.ToByte(hex.Substring(4, 2), 16);
+        return (SrgbToLinear(r8/255.0), SrgbToLinear(g8/255.0), SrgbToLinear(b8/255.0));
+    }
 
-        <!-- Optional capacity (shown only if values provided) -->
-        @if (DriveSizeGb is not null && FreeSpaceGb is not null && DriveSizeGb > 0)
-        {
-            <MudStack>
-                <MudText Typo="Typo.overline">Storage</MudText>
-                <MudProgressLinear Value="@UsedPercent" Color="@(UsedPercent >= 80 ? Color.Error : UsedPercent >= 60 ? Color.Warning : Color.Success)" />
-                <MudText Typo="Typo.caption" Color="Color.Secondary">
-                    Used @((DriveSizeGb - FreeSpaceGb).Value.ToString("0")) GB / @DriveSizeGb.Value.ToString("0") GB (@UsedPercent.ToString("0")%)
-                </MudText>
-            </MudStack>
-        }
-
-        @if (MemoryGb is not null && MemoryGb > 0)
-        {
-            <MudStack>
-                <MudText Typo="Typo.overline">Memory</MudText>
-                <MudText>@MemoryGb.Value.ToString("0") GB</MudText>
-            </MudStack>
-        }
-
-        <!-- Notes / extras -->
-        @if (!string.IsNullOrWhiteSpace(Notes))
-        {
-            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">@Notes</MudAlert>
-        }
-    </MudStack>
-</MudPaper>
+    private static double SrgbToLinear(double c)
+        => c <= 0.04045 ? c/12.92 : Math.Pow((c+0.055)/1.055, 2.4);
+}
+Use in MudBlazor (example with MudAvatar)
+r
+Copy
+@code {
+    string initials => GetInitials(UserDisplayName);
+    string bg => AvatarColor.PickForUser(UserDisplayName).hex;
+    string fg => AvatarColor.PickForUser(UserDisplayName).textHex;
+}
+<MudAvatar Style="background:@bg;color:@fg">@initials</MudAvatar>
