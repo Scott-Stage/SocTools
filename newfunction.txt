@@ -1,21 +1,4 @@
-    public static readonly (string Name, string Hex)[] Palette =
-    {
-        ("PastelBlue",        "#99CCF3"), // from #CCE4F6 → more saturation
-        ("PastelCyanBlue",    "#9FD0F2"),
-        ("PastelRoyalBlue",   "#A6B0E8"),
-        ("PastelIndigo",      "#C1AEE2"),
-        ("PastelPurple",      "#C9A4E0"),
-        ("PastelMagenta",     "#E48CD7"),
-        ("PastelPink",        "#F59CCB"),
-        ("PastelCoral",       "#F7B093"),
-        ("PastelPumpkin",     "#E9B191"),
-        ("PastelRust",        "#C79B85"),
-        ("PastelGold",        "#F8DC88"),
-        ("PastelLime",        "#B9DC84"),
-        ("PastelGreen",       "#96C996"),
-        ("PastelTeal",        "#8BC7C8"),
-        ("PastelCyan",        "#87DDE2"),
-        ("PastelSteel",       "#BFBEBE"),
-        ("PastelPlatinum",    "#C8C7C5"),
-        ("PastelGray",        "#CAC9C8")
-    };
+var parts2 = Regex.Matches(input, @"[A-Za-z0-9.]+")
+                  .Cast<Match>()
+                  .Select(m => m.Value)
+                  .ToList();
