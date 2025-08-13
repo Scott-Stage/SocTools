@@ -1,4 +1,4 @@
-var parts2 = Regex.Matches(input, @"[A-Za-z0-9.]+")
-                  .Cast<Match>()
-                  .Select(m => m.Value)
-                  .ToList();
+<MudButton Color="Color.Primary" Variant="Variant.Filled" Class="pa-2">
+  <img src="/images/edit.png" alt="Edit" style="width:20px;height:20px;vertical-align:middle;margin-right:.5rem;" />
+  Edit
+</MudButton>
