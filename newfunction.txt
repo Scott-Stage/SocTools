@@ -1,112 +1,25 @@
-Yes—doable. Bind the list’s selection to a property with a custom **setter**; when it changes, expand the ancestor group(s) that contain the selected item. Drive expansion with booleans (or a dictionary) and show nested lists inside a `<MudCollapse>`.
-
-Here’s a clean pattern (one or more nested levels):
-
-```razor
-@* --- Razor --- *@
-<MudList T="string" @bind-SelectedValue="SelectedId" Dense="true" Hover="true">
-    @foreach (var group in Groups)
-    {
-        <MudListItem Class="d-flex align-center">
-            <MudIconButton Size="Size.Small"
-                           Icon="@(IsExpanded(group.Id) ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
-                           OnClick="@(()=>Toggle(group.Id))" />
-            <span class="ml-2">@group.Title</span>
-        </MudListItem>
-
-        <MudCollapse Expanded="@IsExpanded(group.Id)" Class="ml-6">
-            <MudList T="string" @bind-SelectedValue="SelectedId" Dense="true" DisablePadding="true">
-                @foreach (var item in group.Items)
-                {
-                    <MudListItem Value="@item.Id">@item.Title</MudListItem>
-
-                    @* If you have deeper nesting, repeat this pattern:
-                       render a header + MudCollapse with another MudList,
-                       and record parent relationships for those children too. *@
-                }
+@foreach (var item in Items)
+{
+    <!-- Content shown ABOVE the row -->
+    <MudCollapse Expanded="@IsOpen(item.Id)" Class="mb-1">
+        <div class="p-3 rounded-lg mud-paper">
+            <!-- your nested items/details go here -->
+            <MudList Dense="true" DisablePadding="true">
+                @* ...children... *@
             </MudList>
-        </MudCollapse>
-    }
-</MudList>
+        </div>
+    </MudCollapse>
 
-<MudText Class="mt-2">Selected: @SelectedId</MudText>
+    <!-- The row that controls it -->
+    <MudListItem OnClick="@(()=>Toggle(item.Id))">
+        <MudIcon Class="mr-2"
+                 Icon="@(IsOpen(item.Id) ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)" />
+        @item.Title
+    </MudListItem>
+}
 
 @code {
-    // selection bound here; setter auto-expands parents
-    private string _selectedId;
-    public string SelectedId
-    {
-        get => _selectedId;
-        set
-        {
-            if (_selectedId == value) return;
-            _selectedId = value;
-            ExpandAncestors(value);
-        }
-    }
-
-    // expand state per group (and per item if you have more levels)
-    private readonly Dictionary<string, bool> _expanded = new();
-
-    // map every node to its parent group (and for deeper levels, parent node)
-    private readonly Dictionary<string, string?> _parentOf = new();
-
-    // sample data model
-    public record Group(string Id, string Title, List<Item> Items);
-    public record Item(string Id, string Title /*, List<Item> Children? for deeper trees */);
-
-    public List<Group> Groups = new()
-    {
-        new Group("g-1", "Group A", new() {
-            new Item("a-1", "Alpha"),
-            new Item("a-2", "Beta")
-        }),
-        new Group("g-2", "Group B", new() {
-            new Item("b-1", "Gamma"),
-            new Item("b-2", "Delta")
-        })
-    };
-
-    protected override void OnInitialized()
-    {
-        // build parent map (extend this if you support >1 nesting level)
-        foreach (var g in Groups)
-        {
-            foreach (var it in g.Items)
-                _parentOf[it.Id] = g.Id;
-            _expanded[g.Id] = false; // collapsed by default
-        }
-
-        // If you set SelectedId from outside, make sure ancestors are expanded:
-        // SelectedId = "b-2";
-        // ExpandAncestors(SelectedId);
-    }
-
-    private bool IsExpanded(string id) => _expanded.TryGetValue(id, out var v) && v;
-    private void Toggle(string id) => _expanded[id] = !IsExpanded(id);
-
-    private void ExpandAncestors(string? id)
-    {
-        // Walk up the parent chain and expand each ancestor
-        var cur = id;
-        while (cur != null && _parentOf.TryGetValue(cur, out var parent) && parent != null)
-        {
-            _expanded[parent] = true;
-            cur = parent; // if you have multiple levels, ensure _parentOf has entries for groups too
-        }
-        StateHasChanged();
-    }
+    private HashSet<string> open = new();
+    bool IsOpen(string id) => open.Contains(id);
+    void Toggle(string id) { if (!open.Add(id)) open.Remove(id); }
 }
-```
-
-### How it works
-
-* `@bind-SelectedValue="SelectedId"` binds selection to a property with a custom setter.
-* When `SelectedId` changes (either by user click **or** you set it in code), `ExpandAncestors` flips the booleans for the containing groups so their `<MudCollapse>` sections open.
-* Each nested `<MudList>` also binds to the same `SelectedId`, so selection is unified across all levels.
-
-### Notes & tips
-
-* For **deeper trees**, store a parent map for every node (not just items → group) and repeat the same header/`MudCollapse`/nested-`MudList` pattern for grandchildren, etc.
-* If you programmatically set `SelectedId` during initialization or navigation, call `ExpandAncestors(SelectedId)` right after to ensure the correct branch is open.
-* If your hierarchy is arbitrarily deep, consider **`MudTreeView`** (it has built-in expand/collapse and selection), but the above works fine for 1–3 levels.
