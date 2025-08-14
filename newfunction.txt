@@ -1,122 +1,112 @@
-public void ExtractUrls()
-{
-    var results = new List<string>();
-    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+Yes—doable. Bind the list’s selection to a property with a custom **setter**; when it changes, expand the ancestor group(s) that contain the selected item. Drive expansion with booleans (or a dictionary) and show nested lists inside a `<MudCollapse>`.
 
-    if (string.IsNullOrWhiteSpace(input))
+Here’s a clean pattern (one or more nested levels):
+
+```razor
+@* --- Razor --- *@
+<MudList T="string" @bind-SelectedValue="SelectedId" Dense="true" Hover="true">
+    @foreach (var group in Groups)
     {
-        links = results;
-        return;
+        <MudListItem Class="d-flex align-center">
+            <MudIconButton Size="Size.Small"
+                           Icon="@(IsExpanded(group.Id) ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight)"
+                           OnClick="@(()=>Toggle(group.Id))" />
+            <span class="ml-2">@group.Title</span>
+        </MudListItem>
+
+        <MudCollapse Expanded="@IsExpanded(group.Id)" Class="ml-6">
+            <MudList T="string" @bind-SelectedValue="SelectedId" Dense="true" DisablePadding="true">
+                @foreach (var item in group.Items)
+                {
+                    <MudListItem Value="@item.Id">@item.Title</MudListItem>
+
+                    @* If you have deeper nesting, repeat this pattern:
+                       render a header + MudCollapse with another MudList,
+                       and record parent relationships for those children too. *@
+                }
+            </MudList>
+        </MudCollapse>
     }
+</MudList>
 
-    // 1) Common HTML attributes (href, src, data-src, poster, action)
-    var attrRegex = new Regex(
-        @"\b(?:href|src|data-src|poster|action)\s*=\s*(?:""(?<u>[^""]+)""|'(?<u>[^']+)'|(?<u>[^\s>]+))",
-        RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+<MudText Class="mt-2">Selected: @SelectedId</MudText>
 
-    // 2) CSS url(...)
-    var cssUrlRegex = new Regex(
-        @"url\(\s*(?:['""])?(?<u>[^'""\)]+)(?:['""])?\s*\)",
-        RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
-
-    // 3) Naked http(s) links in text
-    var nakedUrlRegex = new Regex(
-        @"https?://[^\s'""<>)]+",
-        RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
-
-    void Consider(string raw)
+@code {
+    // selection bound here; setter auto-expands parents
+    private string _selectedId;
+    public string SelectedId
     {
-        if (string.IsNullOrWhiteSpace(raw)) return;
-
-        // Clean common punctuation and HTML-decode
-        var candidate = WebUtility.HtmlDecode(raw.Trim())
-            .Trim('<', '>', ' ')
-            .TrimEnd('.', ',', ';', ')', ']', '}', '>', '"', '\'');
-
-        if (string.IsNullOrWhiteSpace(candidate)) return;
-
-        // Try to unwrap Outlook Safe Links; if unwrapped, use the target
-        var unwrapped = TryUnwrapOutlookSafeLink(candidate);
-
-        // We include:
-        //  - Absolute http/https URLs
-        //  - Relative paths (from attributes) as-is
-        if (Uri.IsWellFormedUriString(unwrapped, UriKind.Absolute))
+        get => _selectedId;
+        set
         {
-            if (seen.Add(unwrapped)) results.Add(unwrapped);
+            if (_selectedId == value) return;
+            _selectedId = value;
+            ExpandAncestors(value);
         }
-        else if (unwrapped.StartsWith("/") || unwrapped.StartsWith("./") || unwrapped.StartsWith("../"))
-        {
-            // keep relative path values from attributes/CSS
-            if (seen.Add(unwrapped)) results.Add(unwrapped);
-        }
-        // Otherwise ignore things like javascript:, mailto:, data:, etc.
     }
 
-    foreach (Match m in attrRegex.Matches(input))
-        Consider(m.Groups["u"].Value);
+    // expand state per group (and per item if you have more levels)
+    private readonly Dictionary<string, bool> _expanded = new();
 
-    foreach (Match m in cssUrlRegex.Matches(input))
-        Consider(m.Groups["u"].Value);
+    // map every node to its parent group (and for deeper levels, parent node)
+    private readonly Dictionary<string, string?> _parentOf = new();
 
-    foreach (Match m in nakedUrlRegex.Matches(input))
-        Consider(m.Value);
+    // sample data model
+    public record Group(string Id, string Title, List<Item> Items);
+    public record Item(string Id, string Title /*, List<Item> Children? for deeper trees */);
 
-    links = results;
-}
-
-/// <summary>
-/// If the URL is an Outlook Safe Link (any region/tenant, incl. GCC/GCC High),
-/// extract and return the decoded target (from url=/target=/destination=/targeturl=).
-/// If not a safelink or no target found, returns the original url unchanged.
-/// </summary>
-private static string TryUnwrapOutlookSafeLink(string url)
-{
-    if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-        return url;
-
-    var host = uri.Host;
-    if (!(host.EndsWith("safelinks.outlook.com", StringComparison.OrdinalIgnoreCase) ||
-          host.EndsWith("safelinks.protection.outlook.com", StringComparison.OrdinalIgnoreCase)))
-        return url;
-
-    var target =
-        TryGetQueryParam(uri.Query, "url") ??
-        TryGetQueryParam(uri.Query, "target") ??
-        TryGetQueryParam(uri.Query, "destination") ??
-        TryGetQueryParam(uri.Query, "targeturl");
-
-    if (string.IsNullOrEmpty(target))
-        return url;
-
-    // Safe Links often double-encode and may HTML-encode internally
-    var decoded = WebUtility.UrlDecode(WebUtility.UrlDecode(target));
-    decoded = WebUtility.HtmlDecode(decoded)?.Trim('<', '>', ' ', '\t', '\r', '\n');
-
-    return string.IsNullOrWhiteSpace(decoded) ? url : decoded!;
-}
-
-/// <summary>
-/// Minimal query-string param reader (case-insensitive).
-/// Accepts query with or without leading '?'
-/// </summary>
-private static string? TryGetQueryParam(string query, string key)
-{
-    if (string.IsNullOrEmpty(query)) return null;
-
-    ReadOnlySpan<char> s = query.AsSpan();
-    if (!s.IsEmpty && s[0] == '?') s = s[1..];
-
-    while (!s.IsEmpty)
+    public List<Group> Groups = new()
     {
-        int amp = s.IndexOf('&');
-        var pair = amp >= 0 ? s[..amp] : s;
-        s = amp >= 0 ? s[(amp + 1)..] : ReadOnlySpan<char>.Empty;
+        new Group("g-1", "Group A", new() {
+            new Item("a-1", "Alpha"),
+            new Item("a-2", "Beta")
+        }),
+        new Group("g-2", "Group B", new() {
+            new Item("b-1", "Gamma"),
+            new Item("b-2", "Delta")
+        })
+    };
 
-        int eq = pair.IndexOf('=');
-        var k = (eq >= 0 ? pair[..eq] : pair).ToString();
-        if (k.Equals(key, StringComparison.OrdinalIgnoreCase))
-            return eq >= 0 ? pair[(eq + 1)..].ToString() : string.Empty;
+    protected override void OnInitialized()
+    {
+        // build parent map (extend this if you support >1 nesting level)
+        foreach (var g in Groups)
+        {
+            foreach (var it in g.Items)
+                _parentOf[it.Id] = g.Id;
+            _expanded[g.Id] = false; // collapsed by default
+        }
+
+        // If you set SelectedId from outside, make sure ancestors are expanded:
+        // SelectedId = "b-2";
+        // ExpandAncestors(SelectedId);
     }
-    return null;
+
+    private bool IsExpanded(string id) => _expanded.TryGetValue(id, out var v) && v;
+    private void Toggle(string id) => _expanded[id] = !IsExpanded(id);
+
+    private void ExpandAncestors(string? id)
+    {
+        // Walk up the parent chain and expand each ancestor
+        var cur = id;
+        while (cur != null && _parentOf.TryGetValue(cur, out var parent) && parent != null)
+        {
+            _expanded[parent] = true;
+            cur = parent; // if you have multiple levels, ensure _parentOf has entries for groups too
+        }
+        StateHasChanged();
+    }
 }
+```
+
+### How it works
+
+* `@bind-SelectedValue="SelectedId"` binds selection to a property with a custom setter.
+* When `SelectedId` changes (either by user click **or** you set it in code), `ExpandAncestors` flips the booleans for the containing groups so their `<MudCollapse>` sections open.
+* Each nested `<MudList>` also binds to the same `SelectedId`, so selection is unified across all levels.
+
+### Notes & tips
+
+* For **deeper trees**, store a parent map for every node (not just items → group) and repeat the same header/`MudCollapse`/nested-`MudList` pattern for grandchildren, etc.
+* If you programmatically set `SelectedId` during initialization or navigation, call `ExpandAncestors(SelectedId)` right after to ensure the correct branch is open.
+* If your hierarchy is arbitrarily deep, consider **`MudTreeView`** (it has built-in expand/collapse and selection), but the above works fine for 1–3 levels.
