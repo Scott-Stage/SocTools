@@ -1,84 +1,83 @@
-Got it — if there’s no need for base URL resolution and you just want every link present in the raw HTML, we can make the function simpler.
-
-Here’s a straightforward version:
-
-```csharp
-using System;
-using System.Collections.Generic;
-using System.Text.RegularExpressions;
-using System.Web;
-
-public static class HtmlUrlExtractor
+public void ExtractUrls()
 {
-    /// <summary>
-    /// Extracts all URLs from href, src, and CSS url(...) in raw HTML.
-    /// </summary>
-    public static List<string> ExtractUrls(string html)
+    // Always produce a fresh list
+    var results = new List<string>();
+
+    if (string.IsNullOrWhiteSpace(input))
     {
-        if (string.IsNullOrWhiteSpace(html))
-            return new List<string>();
-
-        var urls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        // 1) Common HTML attributes (href, src, data-src, poster, action)
-        var attrRegex = new Regex(
-            @"\b(?:href|src|data-src|poster|action)\s*=\s*(?:""(?<u>[^""]+)""|'(?<u>[^']+)'|(?<u>[^\s>]+))",
-            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
-
-        foreach (Match m in attrRegex.Matches(html))
-        {
-            var u = HttpUtility.HtmlDecode(m.Groups["u"].Value.Trim());
-            if (!string.IsNullOrEmpty(u))
-                urls.Add(u);
-        }
-
-        // 2) CSS url(...)
-        var cssUrlRegex = new Regex(
-            @"url\(\s*(?:['""])?(?<u>[^'""\)]+)(?:['""])?\s*\)",
-            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
-
-        foreach (Match m in cssUrlRegex.Matches(html))
-        {
-            var u = HttpUtility.HtmlDecode(m.Groups["u"].Value.Trim());
-            if (!string.IsNullOrEmpty(u))
-                urls.Add(u);
-        }
-
-        // 3) Naked http(s) links in text
-        var nakedUrlRegex = new Regex(
-            @"https?://[^\s'""<>)]+",
-            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
-
-        foreach (Match m in nakedUrlRegex.Matches(html))
-        {
-            urls.Add(m.Value);
-        }
-
-        return new List<string>(urls);
+        links = results;
+        return;
     }
+
+    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    // Match:
+    //   https://gccx.safelinks.outlook.com/...
+    //   https://gcc01.safelinks.protection.outlook.com/...
+    //   https://gccNN.safelinks.outlook.com/...
+    var safeLinkRegex = new Regex(
+        @"https?://(?:gccx|gcc\d+)\.safelinks(?:\.protection)?\.outlook\.com/[^\s'""<>)]+",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+
+    foreach (Match m in safeLinkRegex.Matches(input))
+    {
+        // Full Safe Link (trim common trailing punctuation attached by surrounding text)
+        var safeLink = m.Value.TrimEnd('.', ',', ';', ')', ']', '}', '>', '"', '\'');
+
+        if (seen.Add(safeLink))
+            results.Add(safeLink);
+
+        // Try to pull the original target from ?url=...
+        if (Uri.TryCreate(safeLink, UriKind.Absolute, out var uri))
+        {
+            var target = GetQueryParam(uri.Query, "url");
+            if (!string.IsNullOrEmpty(target))
+            {
+                // Many Safe Links double-encode; decode twice and HTML-decode
+                var decoded = WebUtility.UrlDecode(WebUtility.UrlDecode(target));
+                decoded = WebUtility.HtmlDecode(decoded)?.Trim();
+
+                if (!string.IsNullOrEmpty(decoded))
+                {
+                    // Strip angle brackets if present (sometimes included)
+                    decoded = decoded.Trim('<', '>');
+
+                    // Only keep well-formed absolute URLs
+                    if (Uri.IsWellFormedUriString(decoded, UriKind.Absolute))
+                    {
+                        if (seen.Add(decoded))
+                            results.Add(decoded);
+                    }
+                }
+            }
+        }
+    }
+
+    // Publish the new list
+    links = results;
 }
-```
 
-### Usage:
-
-```csharp
-string html = "<a href='https://example.com'>Link</a><img src=\"/images/pic.jpg\">";
-List<string> links = HtmlUrlExtractor.ExtractUrls(html);
-
-foreach (var link in links)
+// Minimal query parser that avoids extra dependencies.
+// Accepts a full query string (with or without leading '?').
+private static string? GetQueryParam(string query, string key)
 {
-    Console.WriteLine(link);
+    if (string.IsNullOrEmpty(query)) return null;
+
+    ReadOnlySpan<char> span = query.AsSpan();
+    if (!span.IsEmpty && span[0] == '?')
+        span = span[1..];
+
+    while (!span.IsEmpty)
+    {
+        int amp = span.IndexOf('&');
+        var pair = amp >= 0 ? span[..amp] : span;
+        span = amp >= 0 ? span[(amp + 1)..] : ReadOnlySpan<char>.Empty;
+
+        int eq = pair.IndexOf('=');
+        var k = (eq >= 0 ? pair[..eq] : pair).ToString();
+        if (k.Equals(key, StringComparison.OrdinalIgnoreCase))
+            return eq >= 0 ? pair[(eq + 1)..].ToString() : string.Empty;
+    }
+
+    return null;
 }
-```
-
-### Key Points:
-
-* Captures:
-
-  * `href`, `src`, `data-src`, `poster`, `action` attributes.
-  * CSS `url(...)` patterns.
-  * Naked `http://` or `https://` links in text.
-* Avoids duplicates using `HashSet<string>`.
-* Keeps URLs exactly as found (absolute or relative).
-
-If you want, I can also make a **version using HtmlAgilityPack** that is more robust and immune to tricky HTML formatting. That would handle malformed HTML far better than regex alone. Would you like me to provide that parser-based version?
