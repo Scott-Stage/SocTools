@@ -1,4 +1,119 @@
-<MudButton Color="Color.Primary" Variant="Variant.Filled" Class="pa-2">
-  <img src="/images/edit.png" alt="Edit" style="width:20px;height:20px;vertical-align:middle;margin-right:.5rem;" />
-  Edit
-</MudButton>
+Here’s a lightweight, dependency-free C# helper that scans raw HTML and extracts URLs from common places (href/src/action attributes, CSS `url(...)`, and `<meta http-equiv="refresh">`). It also optionally resolves relative links against a base URL.
+
+```csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
+using System.Web;
+
+public static class HtmlUrlExtractor
+{
+    /// <summary>
+    /// Extract all URLs from raw HTML.
+    /// Looks in href/src/data-src/poster/action attributes, CSS url(...), and meta refresh.
+    /// Optionally resolves relative URLs against baseUrl.
+    /// </summary>
+    public static List<string> ExtractUrls(string html, string? baseUrl = null, bool includeNonHttp = false)
+    {
+        if (string.IsNullOrWhiteSpace(html)) return new List<string>();
+
+        var urls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // 1) Attributes: href, src, data-src, poster, action
+        var attrRegex = new Regex(
+            @"\b(?:href|src|data-src|poster|action)\s*=\s*(?:""(?<u>[^""]+)""|'(?<u>[^']+)'|(?<u>[^\s>]+))",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+
+        foreach (Match m in attrRegex.Matches(html))
+        {
+            var u = HttpUtility.HtmlDecode(m.Groups["u"].Value.Trim());
+            if (!string.IsNullOrEmpty(u)) urls.Add(u);
+        }
+
+        // 2) CSS url(...)
+        var cssUrlRegex = new Regex(
+            @"url\(\s*(?:['""])?(?<u>[^'""\)]+)(?:['""])?\s*\)",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+
+        foreach (Match m in cssUrlRegex.Matches(html))
+        {
+            var u = HttpUtility.HtmlDecode(m.Groups["u"].Value.Trim());
+            if (!string.IsNullOrEmpty(u)) urls.Add(u);
+        }
+
+        // 3) <meta http-equiv="refresh" content="0; url=...">
+        var metaRefreshRegex = new Regex(
+            @"<meta[^>]*http-equiv\s*=\s*['""]?refresh['""]?[^>]*content\s*=\s*['""][^'""]*url\s*=\s*(?<u>[^'"";>\s]+)",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+
+        foreach (Match m in metaRefreshRegex.Matches(html))
+        {
+            var u = HttpUtility.HtmlDecode(m.Groups["u"].Value.Trim());
+            if (!string.IsNullOrEmpty(u)) urls.Add(u);
+        }
+
+        // 4) Fallback: naked http(s) links in text (avoids grabbing trailing punctuation)
+        var nakedUrlRegex = new Regex(
+            @"https?://[^\s'""<>)]+",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+
+        foreach (Match m in nakedUrlRegex.Matches(html))
+        {
+            urls.Add(m.Value);
+        }
+
+        // Normalize & optionally resolve relatives
+        var resolved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        Uri? baseUri = null;
+        if (!string.IsNullOrWhiteSpace(baseUrl) && Uri.TryCreate(baseUrl, UriKind.Absolute, out var parsedBase))
+            baseUri = parsedBase;
+
+        foreach (var raw in urls)
+        {
+            var cleaned = raw.Trim();
+
+            // Skip anchors and javascript:void(0) etc.
+            if (cleaned.StartsWith("#") || cleaned.StartsWith("javascript:", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // Resolve against base if relative
+            string finalUrl = cleaned;
+            if (baseUri != null && Uri.TryCreate(baseUri, cleaned, out var abs))
+            {
+                finalUrl = abs.ToString();
+            }
+
+            // Validate scheme unless includeNonHttp
+            if (Uri.TryCreate(finalUrl, UriKind.RelativeOrAbsolute, out var uri))
+            {
+                if (!uri.IsAbsoluteUri)
+                {
+                    // keep relative only if no base and caller wants them
+                    if (baseUri == null) resolved.Add(finalUrl);
+                    continue;
+                }
+
+                if (includeNonHttp || uri.Scheme.Equals("http", StringComparison.OrdinalIgnoreCase) || uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase))
+                {
+                    resolved.Add(uri.ToString());
+                }
+            }
+        }
+
+        return resolved.ToList();
+    }
+}
+```
+
+### Usage
+
+```csharp
+string html = /* your raw HTML string */;
+List<string> urls = HtmlUrlExtractor.ExtractUrls(html, baseUrl: "https://example.com"); // resolves relatives
+```
+
+### Notes
+
+* This is pragmatic and fast, but regex isn’t a full HTML parser. For highly malformed HTML or very edge-case attributes, consider an HTML parser like **HtmlAgilityPack** or **AngleSharp**.
+* If you want a parser-based version, say the word and I’ll drop in a snippet using HtmlAgilityPack.
