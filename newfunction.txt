@@ -1,40 +1,7 @@
-using System.Reflection;
-using MudBlazor;
-
-public static class ThemeUtils
-{
-    /// <summary>
-    /// Returns a new PaletteDark with every property set to the current
-    /// MudBlazor default values (for your installed package version).
-    /// </summary>
-    public static PaletteDark CreateDefaultPaletteDark()
-    {
-        var source = new MudTheme().PaletteDark;   // MudBlazor's defaults
-        var target = new PaletteDark();
-        CopyPublicProps(source, target);
-        return target;
-    }
-
-    /// <summary>Shallow copy of all public, readable/writable properties.</summary>
-    private static void CopyPublicProps<T>(T from, T to)
-    {
-        foreach (var p in typeof(T).GetProperties(BindingFlags.Instance | BindingFlags.Public))
-        {
-            if (p.CanRead && p.CanWrite)
-                p.SetValue(to, p.GetValue(from));
-        }
-    }
-}
-Use it
-csharp
-Copy
-Edit
-var myTheme = new MudTheme
-{
-    PaletteLight = new PaletteLight(),               // optional
-    PaletteDark  = ThemeUtils.CreateDefaultPaletteDark()
-};
-
-// Now tweak anything you want, *after* cloning defaults:
-myTheme.PaletteDark.Primary = Colors.Indigo.Lighten1;
-myTheme.PaletteDark.Success = Colors.Green.Darken1;
+<ItemGroup>
+  <!-- Exclude everything under /logs from file watching -->
+  <None             Update="logs\**\*" Watch="false" />
+  <Content          Update="logs\**\*" Watch="false" />
+  <Compile          Update="logs\**\*" Watch="false" />
+  <EmbeddedResource Update="logs\**\*" Watch="false" />
+</ItemGroup>
