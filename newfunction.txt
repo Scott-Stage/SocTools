@@ -1,7 +1,56 @@
-<ItemGroup>
-  <!-- Exclude everything under /logs from file watching -->
-  <None             Update="logs\**\*" Watch="false" />
-  <Content          Update="logs\**\*" Watch="false" />
-  <Compile          Update="logs\**\*" Watch="false" />
-  <EmbeddedResource Update="logs\**\*" Watch="false" />
-</ItemGroup>
+You’ve got a few issues all at once:
+
+1. It’s `JsonSerializer`, not `JsonDeserializer`.
+2. Generic-call syntax is wrong — no angle-brackets in parentheses.
+3. You’re using **Newtonsoft** attributes (`[JsonProperty]`) with **System.Text.Json**. Use `[JsonPropertyName]`.
+4. Typos/casing: `HttpResponseMessage.Content.ReadAsStringAsync()`, not `HttpResonseMessage.content.readAsStringAsync()`.
+5. Initialize your dictionary (avoid nulls).
+
+Here’s a fixed, minimal version with **System.Text.Json**:
+
+```csharp
+using System.Net.Http;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Collections.Generic;
+
+// models
+public class ResponseObject<TItem>
+{
+    [JsonPropertyName("resources")]
+    public Dictionary<string, TItem> Resources { get; set; } = new();
+}
+
+public class ResponseItem
+{
+    [JsonPropertyName("hostname")]
+    public string Hostname { get; set; } = "";
+}
+
+// usage
+var result = await httpResponseMessage.Content.ReadAsStringAsync();
+
+var apiResponse = JsonSerializer.Deserialize<ResponseObject<ResponseItem>>(
+    result,
+    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+);
+
+// optional: guard if the JSON didn't match the shape
+apiResponse ??= new ResponseObject<ResponseItem>();
+```
+
+If you prefer **Newtonsoft.Json**, keep your `[JsonProperty]` attributes and do:
+
+```csharp
+using Newtonsoft.Json;
+
+var apiResponse = JsonConvert.DeserializeObject<ResponseObject<ResponseItem>>(result);
+```
+
+Either way, the line that was breaking should be:
+
+```csharp
+var apiResponse = JsonSerializer.Deserialize<ResponseObject<ResponseItem>>(result);
+```
+
+…not `JsonDeserializer.Deserialize(<ResponseObject<ResponseItem>>)(result)`.
