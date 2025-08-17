@@ -1,24 +1,10 @@
-You’ve got a few issues all at once:
-
-1. It’s `JsonSerializer`, not `JsonDeserializer`.
-2. Generic-call syntax is wrong — no angle-brackets in parentheses.
-3. You’re using **Newtonsoft** attributes (`[JsonProperty]`) with **System.Text.Json**. Use `[JsonPropertyName]`.
-4. Typos/casing: `HttpResponseMessage.Content.ReadAsStringAsync()`, not `HttpResonseMessage.content.readAsStringAsync()`.
-5. Initialize your dictionary (avoid nulls).
-
-Here’s a fixed, minimal version with **System.Text.Json**:
-
-```csharp
-using System.Net.Http;
-using System.Text.Json;
+Quick fix: model resources as a list
 using System.Text.Json.Serialization;
-using System.Collections.Generic;
 
-// models
 public class ResponseObject<TItem>
 {
     [JsonPropertyName("resources")]
-    public Dictionary<string, TItem> Resources { get; set; } = new();
+    public List<TItem> Resources { get; set; } = new();
 }
 
 public class ResponseItem
@@ -27,30 +13,39 @@ public class ResponseItem
     public string Hostname { get; set; } = "";
 }
 
-// usage
-var result = await httpResponseMessage.Content.ReadAsStringAsync();
 
-var apiResponse = JsonSerializer.Deserialize<ResponseObject<ResponseItem>>(
-    result,
-    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
-);
+Deserialize:
 
-// optional: guard if the JSON didn't match the shape
-apiResponse ??= new ResponseObject<ResponseItem>();
-```
+var apiResponse =
+    JsonSerializer.Deserialize<ResponseObject<ResponseItem>>(result);
 
-If you prefer **Newtonsoft.Json**, keep your `[JsonProperty]` attributes and do:
+// If you need a dictionary keyed by hostname:
+var dict = apiResponse?.Resources?
+    .ToDictionary(x => x.Hostname, x => x, StringComparer.OrdinalIgnoreCase)
+    ?? new Dictionary<string, ResponseItem>(StringComparer.OrdinalIgnoreCase);
 
-```csharp
-using Newtonsoft.Json;
+If your array items include a key/value pair
 
-var apiResponse = JsonConvert.DeserializeObject<ResponseObject<ResponseItem>>(result);
-```
+If the JSON is like:
 
-Either way, the line that was breaking should be:
+"resources": [
+  { "key": "srv1", "value": { "hostname": "a" } },
+  { "key": "srv2", "value": { "hostname": "b" } }
+]
 
-```csharp
-var apiResponse = JsonSerializer.Deserialize<ResponseObject<ResponseItem>>(result);
-```
 
-…not `JsonDeserializer.Deserialize(<ResponseObject<ResponseItem>>)(result)`.
+Model it and convert:
+
+public class ResponseObject<TItem>
+{
+    [JsonPropertyName("resources")]
+    public List<ResourceEntry<TItem>> Resources { get; set; } = new();
+}
+public class ResourceEntry<TItem>
+{
+    [JsonPropertyName("key")]   public string Key { get; set; } = "";
+    [JsonPropertyName("value")] public TItem  Value { get; set; } = default!;
+}
+
+// then
+var dict = apiResponse.Resources.ToDictionary(e => e.Key, e => e.Value);
