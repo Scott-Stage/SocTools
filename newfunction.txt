@@ -1,4 +1,14 @@
-List<DeviceModel> devices =
-    JsonSerializer.Deserialize<ResponseObject<DeviceModel>>(result,
-        new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-    ?.Resources ?? new List<DeviceModel>();
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+public class ResourcesResponse
+{
+    [JsonPropertyName("resources")]
+    public List<string> Resources { get; set; } = new();
+}
+
+// usage
+var resp = JsonSerializer.Deserialize<ResourcesResponse>(json,
+    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+string? value = resp?.Resources.FirstOrDefault(); // "targetValue" (or null if empty)
