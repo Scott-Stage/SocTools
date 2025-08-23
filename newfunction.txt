@@ -1,32 +1,76 @@
-using System.Text.Json;
-using System.Text.Json.Serialization.Metadata;
-
-// existing instance you want to update
-HostResource existing = GetExistingHostResource();
-
-// incoming JSON for a HostResource
-string json = result; // ← your new payload
-
-var resolver = new DefaultJsonTypeInfoResolver
+void MergeIntoExistingByIdOrHostname(DiscoverResponse existing, string resultJson)
 {
-    Modifiers =
+    using var doc = JsonDocument.Parse(resultJson);
+    if (!doc.RootElement.TryGetProperty("resources", out var resources) ||
+        resources.ValueKind != JsonValueKind.Array) return;
+
+    foreach (var el in resources.EnumerateArray())
     {
-        (JsonTypeInfo ti) =>
+        string? id = el.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+        string? host = el.TryGetProperty("hostname", out var hEl) ? hEl.GetString() : null;
+
+        // 1) find target (prefer id, then hostname)
+        var target = existing.Resources.FirstOrDefault(r =>
+                         (!string.IsNullOrWhiteSpace(id)   && string.Equals(r.Id, id, StringComparison.OrdinalIgnoreCase)) ||
+                         (!string.IsNullOrWhiteSpace(host) && string.Equals(r.Hostname, host, StringComparison.OrdinalIgnoreCase)));
+
+        // If not found, create and add
+        if (target is null)
         {
-            if (ti.Type == typeof(HostResource))
-                ti.CreateObject = () => existing; // reuse THIS instance
+            target = new HostResource { Id = id, Hostname = host };
+            existing.Resources.Add(target);
         }
+
+        // 2) Populate 'target' in place from this JSON element
+        var resolver = new DefaultJsonTypeInfoResolver
+        {
+            Modifiers =
+            {
+                (JsonTypeInfo ti) =>
+                {
+                    if (ti.Type == typeof(HostResource))
+                        ti.CreateObject = () => target; // reuse this instance
+                }
+            }
+        };
+
+        var opts = new JsonSerializerOptions
+        {
+            TypeInfoResolver = resolver,
+            PropertyNameCaseInsensitive = true,
+            PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate
+        };
+
+        JsonSerializer.Deserialize<HostResource>(el, opts); // mutates 'target'
+
+        // 3) Optional: tidy lists (dedupe / preserve order)
+        DedupeLists(target);
     }
-};
+}
 
-var opts = new JsonSerializerOptions
+static void DedupeLists(HostResource r)
 {
-    TypeInfoResolver = resolver,
-    PropertyNameCaseInsensitive = true,
-    // .NET 8: populate nested objects/collections instead of replacing the instance
-    PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate
-};
+    if (r.LocalIpAddresses is not null)
+        r.LocalIpAddresses = r.LocalIpAddresses
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
-// This call MUTATES 'existing'
-JsonSerializer.Deserialize<HostResource>(json, opts);
-// 'existing' now contains the new values
+    if (r.MacAddresses is not null)
+        r.MacAddresses = r.MacAddresses
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    if (r.NetworkInterfaces is not null)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        r.NetworkInterfaces = r.NetworkInterfaces
+            .Where(ni =>
+            {
+                var key = $"{ni.LocalIp}|{ni.MacAddress}";
+                return seen.Add(key);
+            })
+            .ToList();
+    }
+}
