@@ -1,14 +1,37 @@
+1) Minimal DTOs for deserialization
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-public class ResourcesResponse
+public sealed class DiscoverResponse
 {
     [JsonPropertyName("resources")]
-    public List<string> Resources { get; set; } = new();
+    public List<HostResource> Resources { get; set; } = new();
 }
 
-// usage
-var resp = JsonSerializer.Deserialize<ResourcesResponse>(json,
-    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+public sealed class HostResource
+{
+    [JsonPropertyName("hostname")]            public string? Hostname { get; set; }
+    [JsonPropertyName("external_ip")]         public string? ExternalIp { get; set; }
+    [JsonPropertyName("current_local_ip")]    public string? CurrentLocalIp { get; set; }
+    [JsonPropertyName("local_ip_addresses")]  public List<string>? LocalIpAddresses { get; set; }
+    [JsonPropertyName("mac_addresses")]       public List<string>? MacAddresses { get; set; }
+    [JsonPropertyName("platform_name")]       public string? PlatformName { get; set; }
+    [JsonPropertyName("os_version")]          public string? OsVersion { get; set; }
+    [JsonPropertyName("network_interfaces")]  public List<NetIf>? NetworkInterfaces { get; set; }
+}
 
-string? value = resp?.Resources.FirstOrDefault(); // "targetValue" (or null if empty)
+public sealed class NetIf
+{
+    [JsonPropertyName("local_ip")]             public string? LocalIp { get; set; }
+    [JsonPropertyName("mac_address")]          public string? MacAddress { get; set; }
+    [JsonPropertyName("interface_alias")]      public string? InterfaceAlias { get; set; }
+    [JsonPropertyName("interface_description")]public string? InterfaceDescription { get; set; }
+    [JsonPropertyName("network_prefix")]       public string? NetworkPrefix { get; set; }
+}
+
+
+Deserialize:
+
+var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+var resp = JsonSerializer.Deserialize<DiscoverResponse>(result, opts)
+           ?? new DiscoverResponse();
