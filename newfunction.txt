@@ -1,27 +1,32 @@
-void MergeIntoExistingByIdOrHostname(DiscoverResponse existing, string resultJson)
+public static void MergeIntoExistingByIdOrHostname(DiscoverResponse existing, string newJson)
 {
-    using var doc = JsonDocument.Parse(resultJson);
-    if (!doc.RootElement.TryGetProperty("resources", out var resources) ||
-        resources.ValueKind != JsonValueKind.Array) return;
+    using var doc = JsonDocument.Parse(newJson);
+    if (!doc.RootElement.TryGetProperty("resources", out var arr) || arr.ValueKind != JsonValueKind.Array)
+        return;
 
-    foreach (var el in resources.EnumerateArray())
+    foreach (var el in arr.EnumerateArray())
     {
-        string? id = el.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+        string? id   = el.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
         string? host = el.TryGetProperty("hostname", out var hEl) ? hEl.GetString() : null;
 
-        // 1) find target (prefer id, then hostname)
+        // 1) Find target (prefer Id, fallback Hostname)
         var target = existing.Resources.FirstOrDefault(r =>
                          (!string.IsNullOrWhiteSpace(id)   && string.Equals(r.Id, id, StringComparison.OrdinalIgnoreCase)) ||
                          (!string.IsNullOrWhiteSpace(host) && string.Equals(r.Hostname, host, StringComparison.OrdinalIgnoreCase)));
 
-        // If not found, create and add
+        // If not found, create & add a new instance
         if (target is null)
         {
             target = new HostResource { Id = id, Hostname = host };
             existing.Resources.Add(target);
         }
 
-        // 2) Populate 'target' in place from this JSON element
+        // (Optional) Keep prior lists so we can merge after populate
+        var prevIps  = target.LocalIpAddresses.ToList();
+        var prevMacs = target.MacAddresses.ToList();
+        var prevNics = target.NetworkInterfaces?.Select(CloneNi).ToList() ?? new List<NetIf>();
+
+        // 2) Populate THIS instance from the JSON element
         var resolver = new DefaultJsonTypeInfoResolver
         {
             Modifiers =
@@ -29,7 +34,7 @@ void MergeIntoExistingByIdOrHostname(DiscoverResponse existing, string resultJso
                 (JsonTypeInfo ti) =>
                 {
                     if (ti.Type == typeof(HostResource))
-                        ti.CreateObject = () => target; // reuse this instance
+                        ti.CreateObject = () => target!;
                 }
             }
         };
@@ -38,39 +43,57 @@ void MergeIntoExistingByIdOrHostname(DiscoverResponse existing, string resultJso
         {
             TypeInfoResolver = resolver,
             PropertyNameCaseInsensitive = true,
-            PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate
+            PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate // .NET 8
         };
 
         JsonSerializer.Deserialize<HostResource>(el, opts); // mutates 'target'
 
-        // 3) Optional: tidy lists (dedupe / preserve order)
-        DedupeLists(target);
+        // 3) Merge lists (union + dedupe, preserve order: new first, then prior)
+        target.LocalIpAddresses = UnionStrings(target.LocalIpAddresses, prevIps);
+        target.MacAddresses     = UnionStrings(target.MacAddresses, prevMacs);
+        target.NetworkInterfaces = UnionNics(target.NetworkInterfaces, prevNics);
     }
-}
 
-static void DedupeLists(HostResource r)
-{
-    if (r.LocalIpAddresses is not null)
-        r.LocalIpAddresses = r.LocalIpAddresses
-            .Where(s => !string.IsNullOrWhiteSpace(s))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-    if (r.MacAddresses is not null)
-        r.MacAddresses = r.MacAddresses
-            .Where(s => !string.IsNullOrWhiteSpace(s))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-    if (r.NetworkInterfaces is not null)
+    // --- helpers ---
+    static List<string> UnionStrings(IEnumerable<string>? a, IEnumerable<string>? b)
     {
+        var list = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        r.NetworkInterfaces = r.NetworkInterfaces
-            .Where(ni =>
+        void add(IEnumerable<string>? src)
+        {
+            if (src is null) return;
+            foreach (var s in src.Where(x => !string.IsNullOrWhiteSpace(x)))
+                if (seen.Add(s)) list.Add(s);
+        }
+        add(a); add(b);
+        return list;
+    }
+
+    static NetIf CloneNi(NetIf n) => new()
+    {
+        LocalIp = n.LocalIp,
+        MacAddress = n.MacAddress,
+        InterfaceAlias = n.InterfaceAlias,
+        InterfaceDescription = n.InterfaceDescription,
+        NetworkPrefix = n.NetworkPrefix
+    };
+
+    static List<NetIf> UnionNics(IEnumerable<NetIf>? a, IEnumerable<NetIf>? b)
+    {
+        var result = new List<NetIf>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void add(IEnumerable<NetIf>? src)
+        {
+            if (src is null) return;
+            foreach (var ni in src)
             {
                 var key = $"{ni.LocalIp}|{ni.MacAddress}";
-                return seen.Add(key);
-            })
-            .ToList();
+                if (seen.Add(key)) result.Add(ni);
+            }
+        }
+
+        add(a); add(b);
+        return result;
     }
 }
