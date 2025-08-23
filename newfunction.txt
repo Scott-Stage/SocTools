@@ -1,3 +1,32 @@
-using var doc = System.Text.Json.JsonDocument.Parse(result);
-var res = doc.RootElement.GetProperty("resources")[0];
-Console.WriteLine(res.TryGetProperty("local_ip_addresses", out var arr) ? arr.ToString() : "no local_ip_addresses");
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
+
+// existing instance you want to update
+HostResource existing = GetExistingHostResource();
+
+// incoming JSON for a HostResource
+string json = result; // ← your new payload
+
+var resolver = new DefaultJsonTypeInfoResolver
+{
+    Modifiers =
+    {
+        (JsonTypeInfo ti) =>
+        {
+            if (ti.Type == typeof(HostResource))
+                ti.CreateObject = () => existing; // reuse THIS instance
+        }
+    }
+};
+
+var opts = new JsonSerializerOptions
+{
+    TypeInfoResolver = resolver,
+    PropertyNameCaseInsensitive = true,
+    // .NET 8: populate nested objects/collections instead of replacing the instance
+    PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate
+};
+
+// This call MUTATES 'existing'
+JsonSerializer.Deserialize<HostResource>(json, opts);
+// 'existing' now contains the new values
