@@ -1,99 +1,42 @@
-public static void MergeIntoExistingByIdOrHostname(DiscoverResponse existing, string newJson)
+using System;
+using System.Net.WebSockets;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Threading;
+
+static async Task WatchCertStreamAsync(string[] patterns, CancellationToken ct)
 {
-    using var doc = JsonDocument.Parse(newJson);
-    if (!doc.RootElement.TryGetProperty("resources", out var arr) || arr.ValueKind != JsonValueKind.Array)
-        return;
+    using var ws = new ClientWebSocket();
+    // Public CT relay
+    var uri = new Uri("wss://certstream.calidog.io/");
+    await ws.ConnectAsync(uri, ct);
 
-    foreach (var el in arr.EnumerateArray())
+    // build one regex for all patterns (case-insensitive)
+    var rx = new Regex(string.Join("|", patterns.Select(Regex.Escape)),
+                       RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    var buf = new byte[1 << 16];
+    while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
     {
-        string? id   = el.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
-        string? host = el.TryGetProperty("hostname", out var hEl) ? hEl.GetString() : null;
+        var seg = new ArraySegment<byte>(buf);
+        var result = await ws.ReceiveAsync(seg, ct);
+        if (result.MessageType == WebSocketMessageType.Close) break;
 
-        // 1) Find target (prefer Id, fallback Hostname)
-        var target = existing.Resources.FirstOrDefault(r =>
-                         (!string.IsNullOrWhiteSpace(id)   && string.Equals(r.Id, id, StringComparison.OrdinalIgnoreCase)) ||
-                         (!string.IsNullOrWhiteSpace(host) && string.Equals(r.Hostname, host, StringComparison.OrdinalIgnoreCase)));
+        var json = Encoding.UTF8.GetString(buf, 0, result.Count);
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("message_type", out var mt) ||
+            mt.GetString() != "certificate_update") continue;
 
-        // If not found, create & add a new instance
-        if (target is null)
-        {
-            target = new HostResource { Id = id, Hostname = host };
-            existing.Resources.Add(target);
-        }
+        var names = doc.RootElement
+            .GetProperty("data").GetProperty("leaf_cert")
+            .GetProperty("all_domains")
+            .EnumerateArray().Select(e => e.GetString()!).Distinct(StringComparer.OrdinalIgnoreCase);
 
-        // (Optional) Keep prior lists so we can merge after populate
-        var prevIps  = target.LocalIpAddresses.ToList();
-        var prevMacs = target.MacAddresses.ToList();
-        var prevNics = target.NetworkInterfaces?.Select(CloneNi).ToList() ?? new List<NetIf>();
-
-        // 2) Populate THIS instance from the JSON element
-        var resolver = new DefaultJsonTypeInfoResolver
-        {
-            Modifiers =
-            {
-                (JsonTypeInfo ti) =>
-                {
-                    if (ti.Type == typeof(HostResource))
-                        ti.CreateObject = () => target!;
-                }
-            }
-        };
-
-        var opts = new JsonSerializerOptions
-        {
-            TypeInfoResolver = resolver,
-            PropertyNameCaseInsensitive = true,
-            PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate // .NET 8
-        };
-
-        JsonSerializer.Deserialize<HostResource>(el, opts); // mutates 'target'
-
-        // 3) Merge lists (union + dedupe, preserve order: new first, then prior)
-        target.LocalIpAddresses = UnionStrings(target.LocalIpAddresses, prevIps);
-        target.MacAddresses     = UnionStrings(target.MacAddresses, prevMacs);
-        target.NetworkInterfaces = UnionNics(target.NetworkInterfaces, prevNics);
-    }
-
-    // --- helpers ---
-    static List<string> UnionStrings(IEnumerable<string>? a, IEnumerable<string>? b)
-    {
-        var list = new List<string>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        void add(IEnumerable<string>? src)
-        {
-            if (src is null) return;
-            foreach (var s in src.Where(x => !string.IsNullOrWhiteSpace(x)))
-                if (seen.Add(s)) list.Add(s);
-        }
-        add(a); add(b);
-        return list;
-    }
-
-    static NetIf CloneNi(NetIf n) => new()
-    {
-        LocalIp = n.LocalIp,
-        MacAddress = n.MacAddress,
-        InterfaceAlias = n.InterfaceAlias,
-        InterfaceDescription = n.InterfaceDescription,
-        NetworkPrefix = n.NetworkPrefix
-    };
-
-    static List<NetIf> UnionNics(IEnumerable<NetIf>? a, IEnumerable<NetIf>? b)
-    {
-        var result = new List<NetIf>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        void add(IEnumerable<NetIf>? src)
-        {
-            if (src is null) return;
-            foreach (var ni in src)
-            {
-                var key = $"{ni.LocalIp}|{ni.MacAddress}";
-                if (seen.Add(key)) result.Add(ni);
-            }
-        }
-
-        add(a); add(b);
-        return result;
+        foreach (var d in names)
+            if (rx.IsMatch(d))
+                Console.WriteLine($"{DateTimeOffset.Now:u}  CT match: {d}");
     }
 }
+
+await WatchCertStreamAsync(new[] { "yourbrand", "your-br\u200band", "yorbrand" }, CancellationToken.None);
