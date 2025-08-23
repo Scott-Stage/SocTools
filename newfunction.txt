@@ -1,42 +1,82 @@
-using System;
+using System.Net;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Threading;
+
+// Proxy that bypasses everything
+sealed class NoProxy : IWebProxy
+{
+    public ICredentials? Credentials { get; set; }
+    public Uri GetProxy(Uri destination) => destination;
+    public bool IsBypassed(Uri host) => true;
+}
 
 static async Task WatchCertStreamAsync(string[] patterns, CancellationToken ct)
 {
     using var ws = new ClientWebSocket();
-    // Public CT relay
-    var uri = new Uri("wss://certstream.calidog.io/");
+    ws.Options.Proxy = new NoProxy(); // <-- disable system proxy use
+    ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(30);
+
+    var uri = new Uri("ws://170.9.26.247:8080/full-stream"); // no trailing slash
     await ws.ConnectAsync(uri, ct);
 
-    // build one regex for all patterns (case-insensitive)
     var rx = new Regex(string.Join("|", patterns.Select(Regex.Escape)),
                        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    var buf = new byte[1 << 16];
+    var buffer = new byte[64 * 1024];
+
     while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
     {
-        var seg = new ArraySegment<byte>(buf);
-        var result = await ws.ReceiveAsync(seg, ct);
-        if (result.MessageType == WebSocketMessageType.Close) break;
+        using var ms = new MemoryStream();
+        WebSocketReceiveResult result;
 
-        var json = Encoding.UTF8.GetString(buf, 0, result.Count);
-        using var doc = JsonDocument.Parse(json);
-        if (!doc.RootElement.TryGetProperty("message_type", out var mt) ||
-            mt.GetString() != "certificate_update") continue;
+        do
+        {
+            result = await ws.ReceiveAsync(buffer, ct);
 
-        var names = doc.RootElement
-            .GetProperty("data").GetProperty("leaf_cert")
-            .GetProperty("all_domains")
-            .EnumerateArray().Select(e => e.GetString()!).Distinct(StringComparer.OrdinalIgnoreCase);
+            if (result.MessageType == WebSocketMessageType.Close)
+            {
+                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", ct);
+                return;
+            }
+            if (result.MessageType != WebSocketMessageType.Text)
+                break; // ignore ping/pong/binary
 
-        foreach (var d in names)
-            if (rx.IsMatch(d))
-                Console.WriteLine($"{DateTimeOffset.Now:u}  CT match: {d}");
+            ms.Write(buffer, 0, result.Count);
+        }
+        while (!result.EndOfMessage);
+
+        if (result.MessageType != WebSocketMessageType.Text)
+            continue;
+
+        ms.Position = 0;
+
+        JsonDocument doc;
+        try { doc = await JsonDocument.ParseAsync(ms, cancellationToken: ct); }
+        catch (JsonException) { continue; }
+
+        using (doc)
+        {
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("message_type", out var mtEl)) continue;
+            var mt = mtEl.GetString();
+            if (mt == "heartbeat") continue;
+            if (mt != "certificate_update") continue;
+
+            if (!root.TryGetProperty("data", out var data) ||
+                !data.TryGetProperty("leaf_cert", out var cert) ||
+                !cert.TryGetProperty("all_domains", out var arr) ||
+                arr.ValueKind != JsonValueKind.Array) continue;
+
+            var names = arr.EnumerateArray()
+                           .Select(e => e.GetString())
+                           .Where(s => !string.IsNullOrWhiteSpace(s))!
+                           .Distinct(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var d in names)
+                if (rx.IsMatch(d))
+                    Console.WriteLine($"{DateTimeOffset.Now:u}  CT match: {d}");
+        }
     }
 }
-
-await WatchCertStreamAsync(new[] { "yourbrand", "your-br\u200band", "yorbrand" }, CancellationToken.None);
