@@ -1,24 +1,21 @@
-using System.Net;
-using System.Net.WebSockets;
-using System.Text;
-using System.Text.Json;
-using System.Text.RegularExpressions;
-
-// Proxy that bypasses everything
 sealed class NoProxy : IWebProxy
 {
     public ICredentials? Credentials { get; set; }
-    public Uri GetProxy(Uri destination) => destination;
-    public bool IsBypassed(Uri host) => true;
+    public Uri GetProxy(Uri d) => d;
+    public bool IsBypassed(Uri h) => true;
 }
 
-static async Task WatchCertStreamAsync(string[] patterns, CancellationToken ct)
+public static async Task WatchCertStreamAsync(
+    string host, int port, string origin, string[] patterns, CancellationToken ct)
 {
-    using var ws = new ClientWebSocket();
-    ws.Options.Proxy = new NoProxy(); // <-- disable system proxy use
-    ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(30);
+    // Build ws://host:port/full-stream/  (note trailing slash)
+    var uri = new UriBuilder("ws", host, port, "/full-stream/").Uri;
 
-    var uri = new Uri("ws://170.9.26.247:8080/full-stream"); // no trailing slash
+    using var ws = new ClientWebSocket();
+    ws.Options.Proxy = new NoProxy();                         // avoid “no such host is known …:8080”
+    ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(30);
+    ws.Options.SetRequestHeader("Origin", origin);            // e.g., "http://170.9.26.247:8080"
+
     await ws.ConnectAsync(uri, ct);
 
     var rx = new Regex(string.Join("|", patterns.Select(Regex.Escape)),
@@ -30,28 +27,22 @@ static async Task WatchCertStreamAsync(string[] patterns, CancellationToken ct)
     {
         using var ms = new MemoryStream();
         WebSocketReceiveResult result;
-
         do
         {
             result = await ws.ReceiveAsync(buffer, ct);
-
             if (result.MessageType == WebSocketMessageType.Close)
             {
                 await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", ct);
                 return;
             }
-            if (result.MessageType != WebSocketMessageType.Text)
-                break; // ignore ping/pong/binary
-
+            if (result.MessageType != WebSocketMessageType.Text) break;
             ms.Write(buffer, 0, result.Count);
         }
         while (!result.EndOfMessage);
 
-        if (result.MessageType != WebSocketMessageType.Text)
-            continue;
+        if (result.MessageType != WebSocketMessageType.Text) continue;
 
         ms.Position = 0;
-
         JsonDocument doc;
         try { doc = await JsonDocument.ParseAsync(ms, cancellationToken: ct); }
         catch (JsonException) { continue; }
@@ -61,8 +52,7 @@ static async Task WatchCertStreamAsync(string[] patterns, CancellationToken ct)
             var root = doc.RootElement;
             if (!root.TryGetProperty("message_type", out var mtEl)) continue;
             var mt = mtEl.GetString();
-            if (mt == "heartbeat") continue;
-            if (mt != "certificate_update") continue;
+            if (mt is "heartbeat" or not "certificate_update") continue;
 
             if (!root.TryGetProperty("data", out var data) ||
                 !data.TryGetProperty("leaf_cert", out var cert) ||
@@ -80,3 +70,14 @@ static async Task WatchCertStreamAsync(string[] patterns, CancellationToken ct)
         }
     }
 }
+Call it like this:
+
+csharp
+Copy
+Edit
+await WatchCertStreamAsync(
+    host: "170.9.26.247",
+    port: 8080,
+    origin: "http://170.9.26.247:8080",   // match the endpoint you’re hitting
+    patterns: new[] { "yourbrand", "y0urbrand" },
+    ct: CancellationToken.None);
