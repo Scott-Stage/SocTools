@@ -1,48 +1,5 @@
-/// <summary>
-    /// Submits a URL to urlscan.io. visibility: "public" | "unlisted" | "private"
-    /// Optional: tags, referer, custom agent, country.
-    /// </summary>
-    public static async Task<UrlscanSubmitResponse> SubmitScanAsync(
-        HttpClient http,
-        string apiKey,
-        string urlToScan,
-        string visibility = "public",
-        IEnumerable<string>? tags = null,
-        string? referer = null,
-        string? customAgent = null,
-        string? country = null,
-        CancellationToken ct = default)
+private static readonly Uri SubmitUri = new("https://urlscan.io/api/v1/scan/"); // note trailing slash
+    private static readonly JsonSerializerOptions JsonOpts = new()
     {
-        // Required header
-        http.DefaultRequestHeaders.Remove("API-Key");
-        http.DefaultRequestHeaders.Add("API-Key", apiKey);
-        // Optional but nice to have
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("UrlscanClient/1.0 (+.NET)");
-
-        var payload = new Dictionary<string, object?>
-        {
-            ["url"] = urlToScan,
-            ["visibility"] = visibility,     // "public" | "unlisted" | "private"
-        };
-
-        if (tags is not null)      payload["tags"] = tags.ToArray();
-        if (!string.IsNullOrWhiteSpace(referer))     payload["referer"] = referer;
-        if (!string.IsNullOrWhiteSpace(customAgent)) payload["customagent"] = customAgent;
-        if (!string.IsNullOrWhiteSpace(country))     payload["country"] = country; // e.g., "us", "de" (when allowed)
-
-        var json = JsonSerializer.Serialize(payload);
-        using var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-        using var resp = await http.PostAsync(SubmitUri, content, ct);
-        var body = await resp.Content.ReadAsStringAsync(ct);
-
-        if (!resp.IsSuccessStatusCode)
-        {
-            // Bubble up a helpful error message
-            throw new HttpRequestException(
-                $"urlscan submit failed {(int)resp.StatusCode} {resp.ReasonPhrase}: {body}");
-        }
-
-        return JsonSerializer.Deserialize<UrlscanSubmitResponse>(body, JsonOpts)
-               ?? new UrlscanSubmitResponse();
-    }
+        PropertyNameCaseInsensitive = true
+    }; 
