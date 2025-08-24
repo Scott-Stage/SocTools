@@ -1,172 +1,120 @@
-// Program.cs
-// .NET 8 (works on .NET 6/7 too)
-
-using System.Net;
-using System.Net.WebSockets;
-using System.Text;
-using System.Text.Json;
-using System.Text.RegularExpressions;
-
-const string HOST = "170.9.26.247";   // <-- your server public IP or DNS
-const int PORT = 8080;                 // container-published port
-const string PATH = "/full-stream";    // canonical path: no trailing slash
-string ORIGIN = $"http://{HOST}:{PORT}";
-
-// Add your watch patterns here (use plain strings; they’re regex-escaped below)
-string[] PATTERNS = new[] { "yourbrand", "y0urbrand", "your-brand" };
-
-var cts = new CancellationTokenSource();
-Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
-
-Console.WriteLine($"Starting certstream watcher → ws://{HOST}:{PORT}{PATH}");
-Console.WriteLine("Press Ctrl+C to stop.");
-
-await RunWithReconnectAsync(HOST, PORT, PATH, ORIGIN, PATTERNS, cts.Token);
-
-// ------------------ Implementation ------------------
-
-static async Task RunWithReconnectAsync(
-    string host, int port, string path, string origin,
-    string[] patterns, CancellationToken ct)
+sealed class NoProxy : IWebProxy
 {
-    // Build a single regex (case-insensitive)
+    public ICredentials? Credentials { get; set; }
+    public Uri GetProxy(Uri d) => d;
+    public bool IsBypassed(Uri h) => true;
+}
+
+static async Task<string> DetectCanonicalPathAsync(string host, int port, CancellationToken ct)
+{
+    using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+    http.Timeout = TimeSpan.FromSeconds(5);
+
+    foreach (var path in new[] { "/full-stream", "/full-stream/" })
+    {
+        try
+        {
+            var url = $"http://{host}:{port}{path}/example.json".Replace("//example.json", "/example.json");
+            using var resp = await http.GetAsync(url, ct);
+            if ((int)resp.StatusCode is >= 200 and < 300) return path;        // 200 OK
+            if ((int)resp.StatusCode == 307 && resp.Headers.Location is { } loc)
+                return loc.AbsolutePath.EndsWith("/") ? "/full-stream/" : "/full-stream";
+        }
+        catch { /* try next */ }
+    }
+    // Fallback to no slash
+    return "/full-stream";
+}
+
+static async Task<ClientWebSocket> ConnectAsync(string host, int port, string path, CancellationToken ct)
+{
+    var ws = new ClientWebSocket();
+    ws.Options.Proxy = new NoProxy();
+    ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(30);                 // send pings
+    ws.Options.SetRequestHeader("Origin", $"http://{host}:{port}");          // server expects Origin
+    var uri = new UriBuilder("ws", host, port, path).Uri;
+    await ws.ConnectAsync(uri, ct);
+    return ws;
+}
+
+static async Task ReceiveLoopAsync(ClientWebSocket ws, Regex filter, CancellationToken ct)
+{
+    var buffer = new byte[64 * 1024];
+    while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
+    {
+        using var ms = new MemoryStream();
+        WebSocketReceiveResult res;
+        do
+        {
+            res = await ws.ReceiveAsync(buffer, ct);
+            if (res.MessageType == WebSocketMessageType.Close)
+            {
+                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", ct);
+                return;
+            }
+            if (res.MessageType != WebSocketMessageType.Text) break;
+            ms.Write(buffer, 0, res.Count);
+        }
+        while (!res.EndOfMessage);
+
+        if (res.MessageType != WebSocketMessageType.Text) continue;
+
+        ms.Position = 0;
+        JsonDocument doc;
+        try { doc = await JsonDocument.ParseAsync(ms, cancellationToken: ct); }
+        catch (JsonException) { continue; }
+
+        using (doc)
+        {
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("message_type", out var mt) ||
+                mt.GetString() != "certificate_update") continue;
+
+            if (!root.TryGetProperty("data", out var data) ||
+                !data.TryGetProperty("leaf_cert", out var cert) ||
+                !cert.TryGetProperty("all_domains", out var arr) ||
+                arr.ValueKind != JsonValueKind.Array) continue;
+
+            foreach (var d in arr.EnumerateArray()
+                                 .Select(e => e.GetString())
+                                 .Where(s => !string.IsNullOrWhiteSpace(s))!
+                                 .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (filter.IsMatch(d))
+                    Console.WriteLine($"{DateTimeOffset.Now:u}  {d}");
+            }
+        }
+    }
+}
+
+static async Task RunAsync(string host, int port, string[] patterns, CancellationToken ct)
+{
     var rx = new Regex(string.Join("|", patterns.Select(Regex.Escape)),
                        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    var backoff = TimeSpan.FromSeconds(1);
-    var backoffMax = TimeSpan.FromSeconds(30);
 
     while (!ct.IsCancellationRequested)
     {
         try
         {
-            using var ws = await ConnectAsync(host, port, path, origin, ct);
-            Console.WriteLine($"[{DateTimeOffset.Now:u}] Connected.");
-
-            // Receive loop: reads full WS messages (handles fragmentation)
+            var path = await DetectCanonicalPathAsync(host, port, ct);
+            Console.WriteLine($"Using canonical path: {path}");
+            using var ws = await ConnectAsync(host, port, path, ct);
+            Console.WriteLine($"[{DateTimeOffset.Now:u}] Connected ws://{host}:{port}{path}");
             await ReceiveLoopAsync(ws, rx, ct);
-
-            // If we get here without exception, server closed gracefully.
             Console.WriteLine($"[{DateTimeOffset.Now:u}] Closed by server.");
         }
-        catch (OperationCanceledException)
-        {
-            break;
-        }
-        catch (WebSocketException wse)
-        {
-            Console.WriteLine($"[{DateTimeOffset.Now:u}] WS error: {wse.Message}");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[{DateTimeOffset.Now:u}] Error: {ex.Message}");
-        }
+        catch (OperationCanceledException) { break; }
+        catch (WebSocketException wse) { Console.WriteLine($"WS error: {wse.Message}"); }
+        catch (Exception ex) { Console.WriteLine($"Error: {ex.Message}"); }
 
-        if (ct.IsCancellationRequested) break;
-
-        Console.WriteLine($"Reconnecting in {backoff.TotalSeconds:N0}s …");
-        try { await Task.Delay(backoff, ct); } catch { break; }
-        backoff = TimeSpan.FromSeconds(Math.Min(backoff.TotalSeconds * 2, backoffMax.TotalSeconds));
+        // backoff before reconnect
+        try { await Task.Delay(TimeSpan.FromSeconds(3), ct); } catch { break; }
     }
 }
 
-static async Task<ClientWebSocket> ConnectAsync(
-    string host, int port, string path, string origin, CancellationToken ct)
-{
-    var uri = new UriBuilder("ws", host, port, path).Uri;
-
-    var ws = new ClientWebSocket();
-    // Bypass system proxies to avoid “no such host is known 1.2.3.4:8080”
-    ws.Options.Proxy = new NoProxy();
-    // The server expects the client to send pings; this schedules periodic PING frames
-    ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(30);
-    // Some deployments check Origin; mirror your working curl
-    ws.Options.SetRequestHeader("Origin", origin);
-
-    await ws.ConnectAsync(uri, ct);
-    return ws;
-}
-
-static async Task ReceiveLoopAsync(ClientWebSocket ws, Regex rx, CancellationToken ct)
-{
-    var buffer = new byte[64 * 1024];
-
-    while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
-    {
-        using var ms = new MemoryStream();
-        WebSocketReceiveResult result;
-
-        // Read the whole message (may arrive in fragments)
-        do
-        {
-            result = await ws.ReceiveAsync(buffer, ct);
-
-            if (result.MessageType == WebSocketMessageType.Close)
-            {
-                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", ct);
-                return;
-            }
-
-            if (result.MessageType != WebSocketMessageType.Text)
-                break; // ignore ping/pong/binary frames (ClientWebSocket handles pongs)
-
-            ms.Write(buffer, 0, result.Count);
-        }
-        while (!result.EndOfMessage);
-
-        if (result.MessageType != WebSocketMessageType.Text)
-            continue;
-
-        ms.Position = 0;
-
-        JsonDocument doc;
-        try
-        {
-            doc = await JsonDocument.ParseAsync(ms, cancellationToken: ct);
-        }
-        catch (JsonException)
-        {
-            // Incomplete/garbled JSON; skip this frame
-            continue;
-        }
-
-        using (doc)
-        {
-            var root = doc.RootElement;
-
-            if (!root.TryGetProperty("message_type", out var mtEl))
-                continue;
-
-            var mt = mtEl.GetString();
-            if (mt is "heartbeat")    // server heartbeat/keepalive type (if any)
-                continue;
-
-            if (mt is not "certificate_update")
-                continue;
-
-            // Extract domains: data.leaf_cert.all_domains[]
-            if (!root.TryGetProperty("data", out var data) ||
-                !data.TryGetProperty("leaf_cert", out var cert) ||
-                !cert.TryGetProperty("all_domains", out var arr) ||
-                arr.ValueKind != JsonValueKind.Array)
-                continue;
-
-            var names = arr.EnumerateArray()
-                           .Select(e => e.GetString())
-                           .Where(s => !string.IsNullOrWhiteSpace(s))!
-                           .Distinct(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var d in names)
-                if (rx.IsMatch(d))
-                    Console.WriteLine($"{DateTimeOffset.Now:u}  CT match: {d}");
-        }
-    }
-}
-
-// Simple proxy bypass (prevents handing “host:port” to system proxy)
-sealed class NoProxy : IWebProxy
-{
-    public ICredentials? Credentials { get; set; }
-    public Uri GetProxy(Uri destination) => destination;
-    public bool IsBypassed(Uri host) => true;
-}
+// ---- call it ----
+/*
+var cts = new CancellationTokenSource();
+Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+await RunAsync("170.9.26.247", 8080, new[] { "yourbrand", "y0urbrand" }, cts.Token);
+*/
