@@ -1,1 +1,298 @@
-curl -s http://170.9.26.247:8080/full-stream/example.json | head -n 3
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Collections.Generic;
+
+#nullable enable
+
+// =======================
+// GET /api/v1/result/{scanId}/
+// =======================
+public sealed class UrlscanResult
+{
+    [JsonPropertyName("_id")]          public string? Id { get; set; }
+    [JsonPropertyName("_rev")]         public string? Rev { get; set; }
+
+    [JsonPropertyName("task")]         public UrlscanTask? Task { get; set; }
+    [JsonPropertyName("page")]         public UrlscanPage? Page { get; set; }
+    [JsonPropertyName("lists")]        public UrlscanLists? Lists { get; set; }
+    [JsonPropertyName("data")]         public UrlscanData? Data { get; set; }
+    [JsonPropertyName("meta")]         public UrlscanMeta? Meta { get; set; }
+    [JsonPropertyName("stats")]        public UrlscanStats? Stats { get; set; }
+    [JsonPropertyName("verdicts")]     public UrlscanVerdicts? Verdicts { get; set; }
+
+    // Often present in results:
+    [JsonPropertyName("labels")]       public List<string>? Labels { get; set; }
+    [JsonPropertyName("usertags")]     public List<string>? UserTags { get; set; }
+    [JsonPropertyName("screenshot")]   public string? Screenshot { get; set; }     // path or URL
+    [JsonPropertyName("dom")]          public string? DomUrl { get; set; }         // path or URL
+    [JsonPropertyName("submitter")]    public UrlscanSubmitter? Submitter { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanTask
+{
+    [JsonPropertyName("url")]          public string? Url { get; set; }
+    [JsonPropertyName("uuid")]         public string? Uuid { get; set; }
+    [JsonPropertyName("time")]         public string? Time { get; set; }           // ISO 8601
+    [JsonPropertyName("visibility")]   public string? Visibility { get; set; }     // public|unlisted|private
+    [JsonPropertyName("method")]       public string? Method { get; set; }         // api|manual|automatic
+    [JsonPropertyName("apexDomain")]   public string? ApexDomain { get; set; }
+    [JsonPropertyName("domain")]       public string? Domain { get; set; }
+    [JsonPropertyName("source")]       public string? Source { get; set; }
+    [JsonPropertyName("options")]      public Dictionary<string, JsonElement>? Options { get; set; }
+
+    // convenience links that often show up
+    [JsonPropertyName("reportURL")]    public string? ReportUrl { get; set; }
+    [JsonPropertyName("screenshotURL")]public string? ScreenshotUrl { get; set; }
+    [JsonPropertyName("domURL")]       public string? DomUrl { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanPage
+{
+    [JsonPropertyName("url")]          public string? Url { get; set; }
+    [JsonPropertyName("domain")]       public string? Domain { get; set; }
+    [JsonPropertyName("apexDomain")]   public string? ApexDomain { get; set; }
+    [JsonPropertyName("ip")]           public string? Ip { get; set; }
+    [JsonPropertyName("asn")]          public string? Asn { get; set; }
+    [JsonPropertyName("asnname")]      public string? AsnName { get; set; }
+    [JsonPropertyName("ptr")]          public string? Ptr { get; set; }
+    [JsonPropertyName("server")]       public string? Server { get; set; }
+    [JsonPropertyName("mimeType")]     public string? MimeType { get; set; }
+    [JsonPropertyName("status")]       public string? Status { get; set; }
+    [JsonPropertyName("title")]        public string? Title { get; set; }
+    [JsonPropertyName("country")]      public string? Country { get; set; }
+
+    // TLS bits (when present)
+    [JsonPropertyName("tlsAgeDays")]   public int? TlsAgeDays { get; set; }
+    [JsonPropertyName("tlsIssuer")]    public string? TlsIssuer { get; set; }
+    [JsonPropertyName("tlsValidDays")] public int? TlsValidDays { get; set; }
+    [JsonPropertyName("tlsValidFrom")] public string? TlsValidFrom { get; set; }
+    [JsonPropertyName("umbrellaRank")] public int? UmbrellaRank { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanLists
+{
+    [JsonPropertyName("ips")]          public List<string>? Ips { get; set; }
+    [JsonPropertyName("countries")]    public List<string>? Countries { get; set; }
+    [JsonPropertyName("asns")]         public List<int>? Asns { get; set; }
+    [JsonPropertyName("domains")]      public List<string>? Domains { get; set; }
+    [JsonPropertyName("urls")]         public List<string>? Urls { get; set; }
+    [JsonPropertyName("linkDomains")]  public List<string>? LinkDomains { get; set; }
+    [JsonPropertyName("server")]       public List<string>? Server { get; set; }
+    [JsonPropertyName("hashes")]       public List<string>? Hashes { get; set; }
+    [JsonPropertyName("certificates")] public List<UrlscanCertificateRef>? Certificates { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanCertificateRef
+{
+    [JsonPropertyName("subjectName")]  public string? SubjectName { get; set; }
+    [JsonPropertyName("issuer")]       public string? Issuer { get; set; }
+    [JsonPropertyName("validFrom")]    public string? ValidFrom { get; set; }
+    [JsonPropertyName("validTo")]      public string? ValidTo { get; set; }
+    [JsonPropertyName("serialNumber")] public string? SerialNumber { get; set; }
+    [JsonPropertyName("fingerprint")]  public string? Fingerprint { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanStats
+{
+    // Totals
+    [JsonPropertyName("requests")]           public int? Requests { get; set; }
+    [JsonPropertyName("uniqIPs")]            public int? UniqIps { get; set; }
+    [JsonPropertyName("uniqCountries")]      public int? UniqCountries { get; set; }
+    [JsonPropertyName("dataLength")]         public long? DataLength { get; set; }
+    [JsonPropertyName("encodedDataLength")]  public long? EncodedDataLength { get; set; }
+
+    // Timing buckets appear in some results
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanData
+{
+    [JsonPropertyName("requests")]  public List<UrlscanHttpTransaction>? Requests { get; set; }
+    [JsonPropertyName("cookies")]   public List<UrlscanCookie>? Cookies { get; set; }
+    [JsonPropertyName("console")]   public List<UrlscanConsoleMsg>? Console { get; set; }
+    [JsonPropertyName("links")]     public List<UrlscanLink>? Links { get; set; }
+    [JsonPropertyName("timing")]    public Dictionary<string, JsonElement>? Timing { get; set; }
+    [JsonPropertyName("globals")]   public Dictionary<string, string>? Globals { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanHttpTransaction
+{
+    [JsonPropertyName("request")]   public UrlscanHttpRequest? Request { get; set; }
+    [JsonPropertyName("response")]  public UrlscanHttpResponse? Response { get; set; }
+    [JsonPropertyName("ip")]        public string? Ip { get; set; }
+    [JsonPropertyName("asn")]       public string? Asn { get; set; }
+    [JsonPropertyName("asnname")]   public string? AsnName { get; set; }
+    [JsonPropertyName("server")]    public string? Server { get; set; }
+    [JsonPropertyName("tls")]       public Dictionary<string, JsonElement>? Tls { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanHttpRequest
+{
+    [JsonPropertyName("method")]    public string? Method { get; set; }
+    [JsonPropertyName("url")]       public string? Url { get; set; }
+    [JsonPropertyName("headers")]   public Dictionary<string, string>? Headers { get; set; }
+    [JsonPropertyName("postData")]  public string? PostData { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanHttpResponse
+{
+    [JsonPropertyName("status")]    public int? Status { get; set; }
+    [JsonPropertyName("mimeType")]  public string? MimeType { get; set; }
+    [JsonPropertyName("headers")]   public Dictionary<string, string>? Headers { get; set; }
+    [JsonPropertyName("hash")]      public string? Sha256 { get; set; }
+    [JsonPropertyName("size")]      public long? Size { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanConsoleMsg
+{
+    [JsonPropertyName("level")]     public string? Level { get; set; }
+    [JsonPropertyName("text")]      public string? Text { get; set; }
+    [JsonPropertyName("url")]       public string? Url { get; set; }
+    [JsonPropertyName("timestamp")] public string? Timestamp { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanCookie
+{
+    [JsonPropertyName("name")]      public string? Name { get; set; }
+    [JsonPropertyName("value")]     public string? Value { get; set; }
+    [JsonPropertyName("domain")]    public string? Domain { get; set; }
+    [JsonPropertyName("path")]      public string? Path { get; set; }
+    [JsonPropertyName("expires")]   public string? Expires { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanLink
+{
+    [JsonPropertyName("text")]      public string? Text { get; set; }
+    [JsonPropertyName("href")]      public string? Href { get; set; }
+    [JsonPropertyName("rel")]       public string? Rel { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanMeta
+{
+    [JsonPropertyName("processors")] public UrlscanProcessors? Processors { get; set; }
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanProcessors
+{
+    // Each processor usually has a .data object; keep them flexible:
+    [JsonPropertyName("asn")]       public UrlscanProcessorBlock? Asn { get; set; }
+    [JsonPropertyName("geoip")]     public UrlscanProcessorBlock? GeoIp { get; set; }
+    [JsonPropertyName("rdns")]      public UrlscanProcessorBlock? Rdns { get; set; }
+    [JsonPropertyName("umbrella")]  public UrlscanProcessorBlock? Umbrella { get; set; }
+    [JsonPropertyName("wappa")]     public UrlscanProcessorBlock? Wappa { get; set; }
+    [JsonPropertyName("download")]  public UrlscanProcessorBlock? Download { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanProcessorBlock
+{
+    [JsonPropertyName("data")]      public JsonElement Data { get; set; } // flexible
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanVerdicts
+{
+    [JsonPropertyName("urlscan")]   public UrlscanOverallVerdict? Urlscan { get; set; }
+    [JsonPropertyName("engines")]   public JsonElement? Engines { get; set; }      // AV engines etc.
+    [JsonPropertyName("community")] public JsonElement? Community { get; set; }    // community flags
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanOverallVerdict
+{
+    [JsonPropertyName("score")]       public int? Score { get; set; }              // -100 .. 100
+    [JsonPropertyName("malicious")]   public bool? Malicious { get; set; }
+    [JsonPropertyName("categories")]  public List<string>? Categories { get; set; }
+    [JsonPropertyName("brands")]      public List<UrlscanBrandHit>? Brands { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanBrandHit
+{
+    [JsonPropertyName("key")]       public string? Key { get; set; }
+    [JsonPropertyName("name")]      public string? Name { get; set; }
+    [JsonPropertyName("country")]   public List<string>? Country { get; set; }     // ISO-3166
+    [JsonPropertyName("vertical")]  public List<string>? Vertical { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanSubmitter
+{
+    [JsonPropertyName("country")]   public string? Country { get; set; }
+    [JsonPropertyName("user")]      public string? User { get; set; }
+    [JsonPropertyName("team")]      public string? Team { get; set; }
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+// =======================
+// GET /api/v1/search?q=…
+// =======================
+public sealed class UrlscanSearchResponse
+{
+    [JsonPropertyName("results")] public List<UrlscanSearchHit> Results { get; set; } = new();
+    [JsonPropertyName("total")]   public int? Total { get; set; }
+    [JsonPropertyName("took")]    public int? TookMs { get; set; }
+    [JsonPropertyName("has_more")]public bool? HasMore { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class UrlscanSearchHit
+{
+    // The search hit embeds a subset of result fields:
+    [JsonPropertyName("_id")]      public string? Id { get; set; }
+    [JsonPropertyName("task")]     public UrlscanTask? Task { get; set; }
+    [JsonPropertyName("page")]     public UrlscanPage? Page { get; set; }
+    [JsonPropertyName("stats")]    public UrlscanStats? Stats { get; set; }
+    [JsonPropertyName("verdicts")] public UrlscanVerdicts? Verdicts { get; set; }
+    [JsonPropertyName("submitter")]public UrlscanSubmitter? Submitter { get; set; }
+
+    // Search-only fields (labels/usertags/meta hits may appear)
+    [JsonPropertyName("labels")]   public List<string>? Labels { get; set; }
+    [JsonPropertyName("usertags")] public List<string>? UserTags { get; set; }
+    [JsonPropertyName("meta")]     public JsonElement? Meta { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+// =======================
+// POST /api/v1/scan (submit)
+// =======================
+public sealed class UrlscanSubmitResponse
+{
+    [JsonPropertyName("uuid")]         public string? Uuid { get; set; }
+    [JsonPropertyName("result")]       public string? ResultUrl { get; set; }      // result API URL
+    [JsonPropertyName("screenshot")]   public string? ScreenshotUrl { get; set; }
+    [JsonPropertyName("message")]      public string? Message { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
