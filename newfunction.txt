@@ -1,5 +1,169 @@
-private static readonly Uri SubmitUri = new("https://urlscan.io/api/v1/scan/"); // note trailing slash
+Here’s a clean, copy-paste C# implementation for the **Safe Browsing Lookup API v4**:
+
+* **Data models** (request/response)
+* **`FindThreatMatchesAsync`** function using `HttpClient`
+* **Example usage**
+
+> Endpoint: `POST https://safebrowsing.googleapis.com/v4/threatMatches:find?key=API_KEY`
+> Request body contains your client info + the URL(s) to check; response returns any matches (or `{}` if none). ([Google for Developers][1])
+
+```csharp
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+#nullable enable
+
+// ---------------- Models ----------------
+
+public sealed class ThreatMatchesFindRequest
+{
+    [JsonPropertyName("client")]     public ClientInfo? Client { get; set; }
+    [JsonPropertyName("threatInfo")] public ThreatInfo? ThreatInfo { get; set; }
+}
+
+public sealed class ClientInfo
+{
+    [JsonPropertyName("clientId")]      public string? ClientId { get; set; }        // e.g., your app/org name
+    [JsonPropertyName("clientVersion")] public string? ClientVersion { get; set; }   // e.g., "1.0.0"
+}
+
+public sealed class ThreatInfo
+{
+    [JsonPropertyName("threatTypes")]      public List<string> ThreatTypes { get; set; } = new();
+    [JsonPropertyName("platformTypes")]    public List<string> PlatformTypes { get; set; } = new();
+    [JsonPropertyName("threatEntryTypes")] public List<string> ThreatEntryTypes { get; set; } = new();
+    [JsonPropertyName("threatEntries")]    public List<ThreatEntry> ThreatEntries { get; set; } = new();
+}
+
+public sealed class ThreatEntry
+{
+    [JsonPropertyName("url")] public string? Url { get; set; }
+}
+
+public sealed class ThreatMatchesFindResponse
+{
+    // If there are no matches, Google returns {} (this property will be null)
+    [JsonPropertyName("matches")] public List<ThreatMatch>? Matches { get; set; }
+}
+
+public sealed class ThreatMatch
+{
+    [JsonPropertyName("threatType")]       public string? ThreatType { get; set; }
+    [JsonPropertyName("platformType")]     public string? PlatformType { get; set; }
+    [JsonPropertyName("threatEntryType")]  public string? ThreatEntryType { get; set; }
+    [JsonPropertyName("threat")]           public ThreatEntry? Threat { get; set; }
+    [JsonPropertyName("cacheDuration")]    public string? CacheDuration { get; set; } // e.g., "300s"
+    [JsonPropertyName("threatEntryMetadata")] public ThreatEntryMetadata? ThreatEntryMetadata { get; set; }
+}
+
+public sealed class ThreatEntryMetadata
+{
+    [JsonPropertyName("entries")] public List<MetadataEntry>? Entries { get; set; }
+}
+
+public sealed class MetadataEntry
+{
+    [JsonPropertyName("key")]   public string? Key { get; set; }
+    [JsonPropertyName("value")] public string? Value { get; set; }
+}
+
+// ---------------- Client function ----------------
+
+public static class SafeBrowsingClient
+{
+    // Keep one HttpClient for your app; pass it in (don’t new HttpClient per call).
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
+        PropertyNamingPolicy = null, // respect exact JSON names
         PropertyNameCaseInsensitive = true
-    }; 
+    };
+
+    /// <summary>
+    /// Calls Safe Browsing Lookup API v4 (threatMatches.find) for the given URLs.
+    /// Returns any matches; if none, response.Matches will be null.
+    /// </summary>
+    public static async Task<ThreatMatchesFindResponse> FindThreatMatchesAsync(
+        HttpClient http,
+        string apiKey,
+        IEnumerable<string> urlsToCheck,
+        string clientId = "your-app",
+        string clientVersion = "1.0.0",
+        IEnumerable<string>? threatTypes = null,
+        IEnumerable<string>? platformTypes = null,
+        IEnumerable<string>? threatEntryTypes = null,
+        CancellationToken ct = default)
+    {
+        var request = new ThreatMatchesFindRequest
+        {
+            Client = new ClientInfo { ClientId = clientId, ClientVersion = clientVersion },
+            ThreatInfo = new ThreatInfo
+            {
+                ThreatTypes = (threatTypes ?? new[]
+                {
+                    // Common sets from the docs
+                    "MALWARE",
+                    "SOCIAL_ENGINEERING",
+                    "UNWANTED_SOFTWARE",
+                    "POTENTIALLY_HARMFUL_APPLICATION"
+                }).ToList(),
+                PlatformTypes = (platformTypes ?? new[] { "ANY_PLATFORM" }).ToList(),
+                ThreatEntryTypes = (threatEntryTypes ?? new[] { "URL" }).ToList(),
+                ThreatEntries = urlsToCheck.Select(u => new ThreatEntry { Url = u }).ToList()
+            }
+        };
+
+        var uri = new Uri($"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={Uri.EscapeDataString(apiKey)}");
+        var json = JsonSerializer.Serialize(request, JsonOpts);
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        using var resp = await http.PostAsync(uri, content, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+
+        if (!resp.IsSuccessStatusCode)
+            throw new HttpRequestException($"Safe Browsing error {(int)resp.StatusCode} {resp.ReasonPhrase}: {body}");
+
+        return JsonSerializer.Deserialize<ThreatMatchesFindResponse>(body, JsonOpts)
+               ?? new ThreatMatchesFindResponse();
+    }
+}
+```
+
+### Example usage
+
+```csharp
+var http = new HttpClient();
+var apiKey = Environment.GetEnvironmentVariable("SAFE_BROWSING_API_KEY")!;
+var urls = new[]
+{
+    "http://example.bad/phish",
+    "https://example.com/",
+};
+
+var result = await SafeBrowsingClient.FindThreatMatchesAsync(http, apiKey, urls);
+
+if (result.Matches is { Count: > 0 })
+{
+    foreach (var m in result.Matches)
+        Console.WriteLine($"{m.Threat?.Url}  =>  {m.ThreatType} on {m.PlatformType}");
+}
+else
+{
+    Console.WriteLine("No threats detected.");
+}
+```
+
+#### Notes & gotchas
+
+* The **Lookup API** is intended for **low-volume** checks; for commercial/large-scale, Google points you to **Web Risk**. ([Google for Developers][2])
+* When **no matches**, Google returns an **empty object** `{}` (so `Matches` will be `null`).
+* Typical threat type sets: `MALWARE`, `SOCIAL_ENGINEERING`, `UNWANTED_SOFTWARE`, `POTENTIALLY_HARMFUL_APPLICATION`; platform: `ANY_PLATFORM`; entry type: `URL`. ([Google for Developers][3])
+* You must **enable the API** and use a valid **API key** in your Google project. ([Google for Developers][4])
+
+If you’d like, I can add a small “bulk checker” that chunks large URL lists to respect request size limits and adds retry/backoff on 429s.
+
+[1]: https://developers.google.com/safe-browsing/v4/lookup-api?utm_source=chatgpt.com "Safe Browsing Lookup API (v4)"
+[2]: https://developers.google.com/safe-browsing/v4?utm_source=chatgpt.com "Overview | Safe Browsing APIs (v4)"
+[3]: https://developers.google.com/safe-browsing/v4/reference/rest/v4/threatMatches/find?utm_source=chatgpt.com "Method: threatMatches.find | Safe Browsing APIs (v4)"
+[4]: https://developers.google.com/safe-browsing/v4/get-started?utm_source=chatgpt.com "Get started | Safe Browsing APIs (v4)"
