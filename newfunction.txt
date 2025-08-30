@@ -1,584 +1,67 @@
-Perfect—here’s a clean, **explicit DTO + client** implementation for the **Hybrid-Analysis (Falcon Sandbox) v2 API**, focused on the endpoints you’ll likely use most, with rich comments and safe defaults. It mirrors the style you used for urlscan.
-
-Covers:
-
-* **Search**
-
-  * `POST /search/terms` (single URL search – your primary use)
-  * `GET /search/hash` (normalize any hash → SHA256 + associated reports)
-* **Submissions**
-
-  * `POST /submit/url`
-  * `POST /submit/url-to-file`
-  * `POST /submit/file` (multipart)
-  * `POST /submit/dropped-file`
-* **Reports & artifacts**
-
-  * `GET /report/{id}/state`
-  * `GET /report/{id}/summary` *(marked deprecated in docs; still included for convenience)*
-  * `GET /report/{id}/{type}` (json/xml/html/pdf/…)
-  * `GET /report/{id}/screenshots`
-  * `GET /report/{id}/dropped-files-v2`
-  * `GET /report/{id}/dropped-file-raw/{hash}`
-* **System**
-
-  * `GET /system/environments`
-  * `GET /system/version`
-  * `GET /system/stats`
-
-> Base URL: `https://hybrid-analysis.com/api/v2`
-> Auth header: `api-key: <YOUR_KEY>` + a normal `User-Agent` (e.g., “Falcon Sandbox Client”).
-> New endpoint `GET /search/hash`; `/report/summary` is deprecated. ([Hybrid Analysis][1])
-
----
-
-```csharp
-#nullable enable
-using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-
-/// Hybrid-Analysis (Falcon Sandbox) v2 SDK-lite
-/// - Explicit DTOs for common endpoints
-/// - Tolerant of schema drift via [JsonExtensionData]
-/// - Heavily commented so usage is clear
-/// Docs: https://hybrid-analysis.com/docs/api/v2
-
-namespace HybridAnalysisSdk;
-
-public sealed class HaClient
+private static readonly JsonSerializerOptions JsonOpts = new()
 {
-    private readonly HttpClient _http;
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    PropertyNameCaseInsensitive = true,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    NumberHandling = JsonNumberHandling.AllowReadingFromString // handles "100" -> 100
+};
+
+public async Task<IReadOnlyList<HaTermsSearchItem>> SearchByUrlAsync(string url, CancellationToken ct = default)
+{
+    using var form = new FormUrlEncodedContent(new[]
     {
-        PropertyNameCaseInsensitive = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
+        new KeyValuePair<string,string>("url", url) // typical term for URL searches
+    });
 
-    /// <summary>
-    /// Create a client around a shared HttpClient.
-    /// </summary>
-    /// <param name="http">Shared HttpClient. BaseAddress set if null.</param>
-    /// <param name="apiKey">Your HA API key. Sent in 'api-key' header.</param>
-    /// <param name="userAgent">Optional UA (HA recommends using a typical UA or 'Falcon').</param>
-    /// <param name="baseUri">Defaults to https://hybrid-analysis.com/api/v2/</param>
-    public HaClient(HttpClient http, string apiKey, string? userAgent = null, Uri? baseUri = null)
+    using var resp = await _http.PostAsync("search/terms", form, ct);
+    await EnsureSuccessAsync(resp, ct); // your existing helper
+
+    var json = await resp.Content.ReadAsStringAsync(ct);
+    if (string.IsNullOrWhiteSpace(json))
+        return Array.Empty<HaTermsSearchItem>();
+
+    // Sometimes HA returns HTML on auth/UA issues—fail fast with a clearer error.
+    var first = json.TrimStart();
+    if (first.StartsWith("<"))
+        throw new HttpRequestException("Hybrid-Analysis returned HTML (likely an auth/UA/permission issue). Body (truncated): " +
+                                       Trunc(first, 400));
+
+    try
     {
-        _http = http;
-        _http.BaseAddress ??= baseUri ?? new Uri("https://hybrid-analysis.com/api/v2/");
-        if (!_http.DefaultRequestHeaders.Contains("api-key"))
-            _http.DefaultRequestHeaders.Add("api-key", apiKey);
+        // 1) Normal: top-level array
+        if (first.StartsWith("["))
+            return JsonSerializer.Deserialize<List<HaTermsSearchItem>>(json, JsonOpts) ?? new();
 
-        if (_http.DefaultRequestHeaders.UserAgent.Count == 0)
-            _http.DefaultRequestHeaders.UserAgent.ParseAdd(string.IsNullOrWhiteSpace(userAgent)
-                ? "Falcon Sandbox Client"
-                : userAgent);
+        // 2) Sometimes: top-level object (error or wrapped payload)
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
 
-        _http.DefaultRequestHeaders.Accept.Clear();
-        _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-    }
+        // Common error shape:
+        if (root.TryGetProperty("message", out var msgProp) && msgProp.ValueKind == JsonValueKind.String)
+            throw new HttpRequestException($"Hybrid-Analysis error: {msgProp.GetString()}");
 
-    // ------------- SEARCH -------------
-
-    /// <summary>
-    /// POST /search/terms
-    /// Single-URL search (HA treats 'url' as substring of recorded HTTP requests in reports).
-    /// </summary>
-    public async Task<IReadOnlyList<HaTermsSearchItem>> SearchByUrlAsync(string url, CancellationToken ct = default)
-    {
-        using var form = new FormUrlEncodedContent(new[]
+        // Try to find an array under typical keys
+        foreach (var key in new[] { "result", "results", "data", "items", "samples", "reports" })
         {
-            new KeyValuePair<string,string>("url", url)
-        });
-
-        using var resp = await _http.PostAsync("search/terms", form, ct);
-        await EnsureSuccessAsync(resp, ct);
-        var stream = await resp.Content.ReadAsStreamAsync(ct);
-        return (await JsonSerializer.DeserializeAsync<List<HaTermsSearchItem>>(stream, JsonOpts, ct)) ?? new();
-    }
-
-    /// <summary>
-    /// GET /search/hash  (new; replaces POST)
-    /// Normalizes MD5/SHA1/SHA256/SHA512 to SHA256 and returns associated detonations.
-    /// </summary>
-    public async Task<HaSearchByHashResponse> SearchByHashAsync(string hash, CancellationToken ct = default)
-    {
-        using var resp = await _http.GetAsync($"search/hash?hash={Uri.EscapeDataString(hash)}", ct);
-        await EnsureSuccessAsync(resp, ct);
-        var stream = await resp.Content.ReadAsStreamAsync(ct);
-        return (await JsonSerializer.DeserializeAsync<HaSearchByHashResponse>(stream, JsonOpts, ct)) ?? new();
-    }
-
-    // ------------- SUBMISSIONS -------------
-
-    /// <summary>
-    /// POST /submit/url — submit a website URL (or a URL to a file) for sandbox analysis.
-    /// Required: environment_id. See GetEnvironmentsAsync().
-    /// </summary>
-    public async Task<HaSubmissionStatus> SubmitUrlAsync(
-        string url, int environmentId, HaSubmitUrlOptions? opt = null, CancellationToken ct = default)
-    {
-        var fields = new List<KeyValuePair<string,string>>
-        {
-            new("url", url),
-            new("environment_id", environmentId.ToString())
-        };
-        AddOptional(fields, opt);
-
-        using var form = new FormUrlEncodedContent(fields);
-        using var resp = await _http.PostAsync("submit/url", form, ct);
-        await EnsureSuccessAsync(resp, ct);
-        var stream = await resp.Content.ReadAsStreamAsync(ct);
-        return (await JsonSerializer.DeserializeAsync<HaSubmissionStatus>(stream, JsonOpts, ct)) ?? new();
-    }
-
-    /// <summary>
-    /// POST /submit/url-to-file — explicitly treat the given URL as a downloadable file.
-    /// Required: environment_id.
-    /// </summary>
-    public async Task<HaSubmissionStatus> SubmitUrlToFileAsync(
-        string fileUrl, int environmentId, HaSubmitUrlOptions? opt = null, CancellationToken ct = default)
-    {
-        var fields = new List<KeyValuePair<string,string>>
-        {
-            new("url", fileUrl),
-            new("environment_id", environmentId.ToString())
-        };
-        AddOptional(fields, opt);
-
-        using var form = new FormUrlEncodedContent(fields);
-        using var resp = await _http.PostAsync("submit/url-to-file", form, ct);
-        await EnsureSuccessAsync(resp, ct);
-        var stream = await resp.Content.ReadAsStreamAsync(ct);
-        return (await JsonSerializer.DeserializeAsync<HaSubmissionStatus>(stream, JsonOpts, ct)) ?? new();
-    }
-
-    /// <summary>
-    /// POST /submit/file — multipart upload of a local file for analysis.
-    /// Required: environment_id.
-    /// </summary>
-    public async Task<HaSubmissionStatus> SubmitFileAsync(
-        Stream file, string filename, int environmentId, HaSubmitFileOptions? opt = null, CancellationToken ct = default)
-    {
-        using var multi = new MultipartFormDataContent();
-        multi.Add(new StreamContent(file), "file", filename);
-        multi.Add(new StringContent(environmentId.ToString()), "environment_id");
-
-        if (opt is not null)
-        {
-            AddIfSet(multi, "email", opt.Email);
-            AddIfSet(multi, "comment", opt.Comment);
-            AddIfSet(multi, "custom_date_time", opt.CustomDateTime);
-            AddIfSet(multi, "priority", opt.Priority);
-            AddIfSet(multi, "document_password", opt.DocumentPassword);
-            AddIfSet(multi, "environment_variable", opt.EnvironmentVariable);
-
-            AddIfSet(multi, "custom_cmd_line", opt.CustomCmdLine);
-            AddIfSet(multi, "custom_run_time", opt.CustomRunTime);
-            AddIfSet(multi, "network_settings", opt.NetworkSettings); // default|tor|simulated
-            AddIfSet(multi, "submit_name", opt.SubmitName);
-
-            AddIfSet(multi, "experimental_anti_evasion", opt.ExperimentalAntiEvasion);
-            AddIfSet(multi, "script_logging", opt.ScriptLogging);
-            AddIfSet(multi, "input_sample_tampering", opt.InputSampleTampering);
+            if (root.TryGetProperty(key, out var arr) && arr.ValueKind == JsonValueKind.Array)
+                return JsonSerializer.Deserialize<List<HaTermsSearchItem>>(arr.GetRawText(), JsonOpts) ?? new();
         }
 
-        using var resp = await _http.PostAsync("submit/file", multi, ct);
-        await EnsureSuccessAsync(resp, ct);
-        var stream = await resp.Content.ReadAsStreamAsync(ct);
-        return (await JsonSerializer.DeserializeAsync<HaSubmissionStatus>(stream, JsonOpts, ct)) ?? new();
-    }
-
-    /// <summary>
-    /// POST /submit/dropped-file — submit a dropped artifact from an existing report.
-    /// id is the report id format: jobId OR "sha256:environmentId".
-    /// </summary>
-    public async Task<HaSubmissionStatus> SubmitDroppedFileAsync(
-        string reportId, string droppedFileSha256, CancellationToken ct = default)
-    {
-        using var form = new FormUrlEncodedContent(new[]
+        // Fall back: if there’s a single item-like object, try to coerce it into a singleton list
+        if (root.ValueKind == JsonValueKind.Object)
         {
-            new KeyValuePair<string,string>("id", reportId),
-            new KeyValuePair<string,string>("file_hash", droppedFileSha256)
-        });
-
-        using var resp = await _http.PostAsync("submit/dropped-file", form, ct);
-        await EnsureSuccessAsync(resp, ct);
-        var stream = await resp.Content.ReadAsStreamAsync(ct);
-        return (await JsonSerializer.DeserializeAsync<HaSubmissionStatus>(stream, JsonOpts, ct)) ?? new();
-    }
-
-    // ------------- REPORTS & ARTIFACTS -------------
-
-    /// <summary>
-    /// GET /report/{id}/state — poll submission state.
-    /// </summary>
-    public async Task<HaSampleState> GetReportStateAsync(string id, CancellationToken ct = default)
-    {
-        using var resp = await _http.GetAsync($"report/{Uri.EscapeDataString(id)}/state", ct);
-        await EnsureSuccessAsync(resp, ct);
-        var stream = await resp.Content.ReadAsStreamAsync(ct);
-        return (await JsonSerializer.DeserializeAsync<HaSampleState>(stream, JsonOpts, ct)) ?? new();
-    }
-
-    /// <summary>
-    /// GET /report/{id}/summary — quick JSON summary (docs mark this as deprecated).
-    /// Prefer downloading the full JSON via GetReportAsync(..., "json").
-    /// </summary>
-    public async Task<HaSampleSummary> GetReportSummaryAsync(string id, CancellationToken ct = default)
-    {
-        using var resp = await _http.GetAsync($"report/{Uri.EscapeDataString(id)}/summary", ct);
-        await EnsureSuccessAsync(resp, ct);
-        var stream = await resp.Content.ReadAsStreamAsync(ct);
-        return (await JsonSerializer.DeserializeAsync<HaSampleSummary>(stream, JsonOpts, ct)) ?? new();
-    }
-
-    /// <summary>
-    /// GET /report/{id}/{type} — download a report (json|xml|html|pdf|maec|stix|misp|misp-json|openioc).
-    /// Returns raw stream for you to save/parse.
-    /// </summary>
-    public async Task<Stream> GetReportAsync(string id, string type, CancellationToken ct = default)
-    {
-        var req = new HttpRequestMessage(HttpMethod.Get, $"report/{Uri.EscapeDataString(id)}/{Uri.EscapeDataString(type)}");
-        // If you want gzip-transferred content for types that HA normally wraps as .gz:
-        // req.Headers.TryAddWithoutValidation("Accept-Encoding", "gzip");
-        var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
-        await EnsureSuccessAsync(resp, ct);
-        return await resp.Content.ReadAsStreamAsync(ct);
-    }
-
-    /// <summary>
-    /// GET /report/{id}/screenshots — array of Base64 screenshots.
-    /// </summary>
-    public async Task<IReadOnlyList<HaSampleScreenshot>> GetScreenshotsAsync(string id, CancellationToken ct = default)
-    {
-        using var resp = await _http.GetAsync($"report/{Uri.EscapeDataString(id)}/screenshots", ct);
-        await EnsureSuccessAsync(resp, ct);
-        var stream = await resp.Content.ReadAsStreamAsync(ct);
-        return (await JsonSerializer.DeserializeAsync<List<HaSampleScreenshot>>(stream, JsonOpts, ct)) ?? new();
-    }
-
-    /// <summary>
-    /// GET /report/{id}/dropped-files-v2 — zip containing ALL extracted/dropped binaries.
-    /// </summary>
-    public async Task<Stream> DownloadAllDroppedFilesAsync(string id, CancellationToken ct = default)
-    {
-        var resp = await _http.GetAsync($"report/{Uri.EscapeDataString(id)}/dropped-files-v2", ct);
-        await EnsureSuccessAsync(resp, ct);
-        return await resp.Content.ReadAsStreamAsync(ct);
-    }
-
-    /// <summary>
-    /// GET /report/{id}/dropped-file-raw/{hash} — download one dropped file (raw).
-    /// </summary>
-    public async Task<Stream> DownloadDroppedFileRawAsync(string id, string fileSha256, CancellationToken ct = default)
-    {
-        var resp = await _http.GetAsync($"report/{Uri.EscapeDataString(id)}/dropped-file-raw/{Uri.EscapeDataString(fileSha256)}", ct);
-        await EnsureSuccessAsync(resp, ct);
-        return await resp.Content.ReadAsStreamAsync(ct);
-    }
-
-    // ------------- SYSTEM -------------
-
-    /// <summary>
-    /// GET /system/environments — list available sandbox environments (IDs + description).
-    /// </summary>
-    public async Task<IReadOnlyList<HaEnvironment>> GetEnvironmentsAsync(CancellationToken ct = default)
-    {
-        using var resp = await _http.GetAsync("system/environments", ct);
-        await EnsureSuccessAsync(resp, ct);
-        var stream = await resp.Content.ReadAsStreamAsync(ct);
-        return (await JsonSerializer.DeserializeAsync<List<HaEnvironment>>(stream, JsonOpts, ct)) ?? new();
-    }
-
-    /// <summary>
-    /// GET /system/version — component versions for the HA instance.
-    /// </summary>
-    public async Task<HaInstanceVersion> GetVersionAsync(CancellationToken ct = default)
-    {
-        using var resp = await _http.GetAsync("system/version", ct);
-        await EnsureSuccessAsync(resp, ct);
-        var stream = await resp.Content.ReadAsStreamAsync(ct);
-        return (await JsonSerializer.DeserializeAsync<HaInstanceVersion>(stream, JsonOpts, ct)) ?? new();
-    }
-
-    /// <summary>
-    /// GET /system/stats — assorted platform stats (counts, tags, distributions).
-    /// </summary>
-    public async Task<HaSystemStats> GetSystemStatsAsync(CancellationToken ct = default)
-    {
-        using var resp = await _http.GetAsync("system/stats", ct);
-        await EnsureSuccessAsync(resp, ct);
-        var stream = await resp.Content.ReadAsStreamAsync(ct);
-        return (await JsonSerializer.DeserializeAsync<HaSystemStats>(stream, JsonOpts, ct)) ?? new();
-    }
-
-    // ---------- internals ----------
-
-    private static async Task EnsureSuccessAsync(HttpResponseMessage resp, CancellationToken ct)
-    {
-        if (resp.IsSuccessStatusCode) return;
-
-        string payload = string.Empty;
-        try { payload = await resp.Content.ReadAsStringAsync(ct); } catch { /* ignore */ }
-
-        try
-        {
-            var err = string.IsNullOrWhiteSpace(payload) ? null :
-                JsonSerializer.Deserialize<HaError>(payload, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-            var msg = $"Hybrid-Analysis API error {(int)resp.StatusCode} {resp.ReasonPhrase}" +
-                      (err?.Message is not null ? $": {err.Message}" : "") +
-                      (!string.IsNullOrWhiteSpace(payload) && err is null ? $": {payload}" : "");
-            throw new HttpRequestException(msg);
+            var single = JsonSerializer.Deserialize<HaTermsSearchItem>(json, JsonOpts);
+            if (single is not null)
+                return new List<HaTermsSearchItem> { single };
         }
-        catch (JsonException)
-        {
-            throw new HttpRequestException($"Hybrid-Analysis API error {(int)resp.StatusCode} {resp.ReasonPhrase}: {payload}");
-        }
-    }
 
-    private static void AddOptional(List<KeyValuePair<string,string>> target, HaSubmitUrlOptions? opt)
+        // Nothing matched — surface something useful for debugging
+        throw new JsonException("Unexpected /search/terms JSON shape: " + Trunc(first, 400));
+    }
+    catch (JsonException ex)
     {
-        if (opt is null) return;
-        AddIfSet(target, "email", opt.Email);
-        AddIfSet(target, "comment", opt.Comment);
-        AddIfSet(target, "custom_date_time", opt.CustomDateTime);
-        AddIfSet(target, "priority", opt.Priority);
-        AddIfSet(target, "document_password", opt.DocumentPassword);
-        AddIfSet(target, "environment_variable", opt.EnvironmentVariable);
+        throw new JsonException("Failed to parse /search/terms response. Ex: " + ex.Message +
+                                " Body (truncated): " + Trunc(first, 400));
     }
 
-    private static void AddIfSet(List<KeyValuePair<string,string>> list, string name, string? value)
-    {
-        if (!string.IsNullOrWhiteSpace(value)) list.Add(new(name, value));
-    }
-    private static void AddIfSet(MultipartFormDataContent multi, string name, string? value)
-    {
-        if (!string.IsNullOrWhiteSpace(value)) multi.Add(new StringContent(value), name);
-    }
-    private static void AddIfSet(MultipartFormDataContent multi, string name, bool? value)
-    {
-        if (value is bool b) multi.Add(new StringContent(b ? "true" : "false"), name);
-    }
-    private static void AddIfSet(MultipartFormDataContent multi, string name, int? value)
-    {
-        if (value is int i) multi.Add(new StringContent(i.ToString()), name);
-    }
+    static string Trunc(string s, int max) => s.Length <= max ? s : s[..max] + " …";
 }
-
-// ------------- DTOs -------------
-
-public sealed class HaError
-{
-    [JsonPropertyName("message")] public string? Message { get; set; }
-    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
-}
-
-/// <summary>
-/// Response from /submit/* endpoints. Contains job id you’ll poll under /report/{id}/state.
-/// </summary>
-public sealed class HaSubmissionStatus
-{
-    [JsonPropertyName("job_id")] public string? JobId { get; set; }
-    [JsonPropertyName("sha256")] public string? Sha256 { get; set; }
-    [JsonPropertyName("environment_id")] public int? EnvironmentId { get; set; }
-    [JsonPropertyName("submission_type")] public string? SubmissionType { get; set; } // e.g., "file" | "url"
-    [JsonPropertyName("state")] public string? State { get; set; } // may be present immediately (e.g., "IN_QUEUE")
-    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
-}
-
-/// <summary>
-/// Poll state of a submission via GET /report/{id}/state
-/// </summary>
-public sealed class HaSampleState
-{
-    [JsonPropertyName("job_id")] public string? JobId { get; set; }
-    [JsonPropertyName("state")] public string? State { get; set; }              // "IN_QUEUE"|"IN_PROGRESS"|"SUCCESS"|"ERROR"|...
-    [JsonPropertyName("error_origin")] public string? ErrorOrigin { get; set; }
-    [JsonPropertyName("error_type")] public string? ErrorType { get; set; }
-    [JsonPropertyName("progress")] public int? Progress { get; set; }           // %
-    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
-}
-
-/// <summary>
-/// Deprecated but handy one-shot summary (GET /report/{id}/summary).
-/// Prefer full JSON: GetReportAsync(id, "json").
-/// </summary>
-public sealed class HaSampleSummary
-{
-    [JsonPropertyName("job_id")] public string? JobId { get; set; }
-    [JsonPropertyName("verdict")] public string? Verdict { get; set; }          // e.g., "malicious"|"suspicious"|"no specific threat"
-    [JsonPropertyName("threat_score")] public int? ThreatScore { get; set; }    // 0..100
-    [JsonPropertyName("av_detect")] public int? AvDetect { get; set; }          // 0..100
-    [JsonPropertyName("environment_id")] public int? EnvironmentId { get; set; }
-    [JsonPropertyName("environment_description")] public string? EnvironmentDescription { get; set; }
-    [JsonPropertyName("sha256")] public string? Sha256 { get; set; }
-    [JsonPropertyName("submit_name")] public string? SubmitName { get; set; }
-    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
-}
-
-/// <summary>
-/// GET /report/{id}/screenshots
-/// </summary>
-public sealed class HaSampleScreenshot
-{
-    [JsonPropertyName("image_base64")] public string? ImageBase64 { get; set; }
-    [JsonPropertyName("description")] public string? Description { get; set; }
-    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
-}
-
-/// <summary>
-/// GET /search/hash
-/// </summary>
-public sealed class HaSearchByHashResponse
-{
-    [JsonPropertyName("sha256s")] public List<string> Sha256s { get; set; } = new();
-    [JsonPropertyName("reports")] public List<HaSearchByHashReport> Reports { get; set; } = new();
-}
-public sealed class HaSearchByHashReport
-{
-    [JsonPropertyName("id")] public string? Id { get; set; }                    // jobId or "sha256:environmentId"
-    [JsonPropertyName("environment_id")] public int? EnvironmentId { get; set; }
-    [JsonPropertyName("environment_description")] public string? EnvironmentDescription { get; set; }
-    [JsonPropertyName("state")] public string? State { get; set; }
-    [JsonPropertyName("verdict")] public string? Verdict { get; set; }
-    [JsonPropertyName("error_type")] public string? ErrorType { get; set; }
-    [JsonPropertyName("error_origin")] public string? ErrorOrigin { get; set; }
-    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
-}
-
-/// <summary>
-/// Row returned by POST /search/terms (we target URL searches).
-/// </summary>
-public sealed class HaTermsSearchItem
-{
-    [JsonPropertyName("sha256")] public string? Sha256 { get; set; }
-    [JsonPropertyName("sha1")]   public string? Sha1 { get; set; }
-    [JsonPropertyName("md5")]    public string? Md5 { get; set; }
-
-    [JsonPropertyName("verdict")]      public string? Verdict { get; set; }
-    [JsonPropertyName("threat_score")] public int? ThreatScore { get; set; }
-    [JsonPropertyName("av_detect")]    public int? AvDetect { get; set; }
-    [JsonPropertyName("vx_family")]    public string? VxFamily { get; set; }
-
-    [JsonPropertyName("environment_id")]          public int? EnvironmentId { get; set; }
-    [JsonPropertyName("environment_description")] public string? EnvironmentDescription { get; set; }
-    [JsonPropertyName("job_id")]                  public string? JobId { get; set; }
-    [JsonPropertyName("submit_name")]             public string? SubmitName { get; set; }
-
-    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
-}
-
-/// <summary>
-/// GET /system/environments
-/// </summary>
-public sealed class HaEnvironment
-{
-    [JsonPropertyName("id")] public int? Id { get; set; }                       // e.g., 160
-    [JsonPropertyName("description")] public string? Description { get; set; }  // e.g., "Windows 10 64 bit"
-    [JsonPropertyName("architecture")] public string? Architecture { get; set; } // may be deprecated in docs, kept for safety
-    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
-}
-
-/// <summary>
-/// GET /system/version
-/// </summary>
-public sealed class HaInstanceVersion
-{
-    [JsonPropertyName("webservice_version")] public string? WebserviceVersion { get; set; }
-    [JsonPropertyName("api_version")]        public string? ApiVersion { get; set; }
-    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
-}
-
-/// <summary>
-/// GET /system/stats (shape varies; keep as bag with a few common fields).
-/// </summary>
-public sealed class HaSystemStats
-{
-    [JsonPropertyName("total_submissions")] public long? TotalSubmissions { get; set; }
-    [JsonPropertyName("total_reports")]     public long? TotalReports { get; set; }
-    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
-}
-
-// ------------- submission options -------------
-
-/// <summary>
-/// Extra form fields for /submit/url and /submit/url-to-file.
-/// </summary>
-public sealed class HaSubmitUrlOptions
-{
-    public string? Email { get; set; }
-    public string? Comment { get; set; }               // You can use #tags here
-    public string? CustomDateTime { get; set; }        // "yyyy-MM-dd HH:mm" (used when URL points to a file)
-    public string? Priority { get; set; }              // 1..10 (5 default)
-    public string? DocumentPassword { get; set; }      // e.g., Office/Adobe docs
-    public string? EnvironmentVariable { get; set; }   // "NAME: value"
-}
-
-/// <summary>
-/// Extra form/multipart fields for /submit/file.
-/// </summary>
-public sealed class HaSubmitFileOptions : HaSubmitUrlOptions
-{
-    public string? CustomCmdLine { get; set; }
-    public string? CustomRunTime { get; set; }         // seconds
-    public string? NetworkSettings { get; set; }       // default|tor|simulated
-    public string? SubmitName { get; set; }
-
-    public bool? ExperimentalAntiEvasion { get; set; }
-    public bool? ScriptLogging { get; set; }
-    public bool? InputSampleTampering { get; set; }
-}
-```
-
----
-
-### How to use (quick examples)
-
-```csharp
-using HybridAnalysisSdk;
-
-// 1) Configure a shared HttpClient
-var http = new HttpClient { BaseAddress = new Uri("https://hybrid-analysis.com/api/v2/") };
-var ha = new HaClient(http, apiKey: Environment.GetEnvironmentVariable("HA_API_KEY")!, userAgent: "Falcon; my-app/1.0");
-
-// 2) Look up environments and pick one
-var envs = await ha.GetEnvironmentsAsync();
-var envId = envs.First(e => e.Description?.Contains("Windows 10", StringComparison.OrdinalIgnoreCase) == true).Id ?? 160;
-
-// 3) Search by URL (single-url workflow)
-var hits = await ha.SearchByUrlAsync("https://example.com/some/path");
-
-// 4) Submit a URL for sandboxing
-var sub = await ha.SubmitUrlAsync("https://example.com/payload", envId);
-
-// 5) Poll state
-HaSampleState state;
-do
-{
-    await Task.Delay(TimeSpan.FromSeconds(5));
-    state = await ha.GetReportStateAsync(sub.JobId!);
-} while (!string.Equals(state.State, "SUCCESS", StringComparison.OrdinalIgnoreCase) &&
-         !string.Equals(state.State, "ERROR", StringComparison.OrdinalIgnoreCase));
-
-// 6) Download full JSON report
-if (string.Equals(state.State, "SUCCESS", StringComparison.OrdinalIgnoreCase))
-{
-    using var jsonStream = await ha.GetReportAsync(sub.JobId!, "json");
-    using var file = File.Create("report.json");
-    await jsonStream.CopyToAsync(file);
-}
-```
-
----
-
-If you want me to bolt on **retry + backoff** (429 handling), **chunked file saves**, or a tiny **helper to pick best environment by OS** automatically, say the word and I’ll weave it in.
-
-**Docs references:** Endpoint shapes, base URL, auth header, new `GET /search/hash`, and `/report/summary` deprecation are from the official v2 docs & changelog. ([Hybrid Analysis][1])
-
-[1]: https://hybrid-analysis.com/docs/api/v2 "
-                            Free Automated Malware Analysis Service - powered by Falcon Sandbox - Falcon Sandbox Public API v2.0 
-                    "
