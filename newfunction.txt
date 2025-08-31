@@ -1,67 +1,28 @@
-private static readonly JsonSerializerOptions JsonOpts = new()
-{
-    PropertyNameCaseInsensitive = true,
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    NumberHandling = JsonNumberHandling.AllowReadingFromString // handles "100" -> 100
-};
+<!-- Exclude SQLite WAL/JOURNAL files from dotnet watch -->
+<ItemGroup Condition="'$(DotNetWatchBuild)'=='true'">
+  <!-- Specific files at project root -->
+  <None Remove="soctools.db-shm" />
+  <None Remove="soctools.db-wal" />
+  <Content Remove="soctools.db-shm" />
+  <Content Remove="soctools.db-wal" />
+  <AdditionalFiles Remove="soctools.db-shm" />
+  <AdditionalFiles Remove="soctools.db-wal" />
+  <Watch Remove="soctools.db-shm" />
+  <Watch Remove="soctools.db-wal" />
 
-public async Task<IReadOnlyList<HaTermsSearchItem>> SearchByUrlAsync(string url, CancellationToken ct = default)
-{
-    using var form = new FormUrlEncodedContent(new[]
-    {
-        new KeyValuePair<string,string>("url", url) // typical term for URL searches
-    });
+  <!-- (Optional) catch all SQLite temp files anywhere under the project -->
+  <None Remove="**\*.db-shm" />
+  <None Remove="**\*.db-wal" />
+  <Content Remove="**\*.db-shm" />
+  <Content Remove="**\*.db-wal" />
+  <Watch Remove="**\*.db-shm" />
+  <Watch Remove="**\*.db-wal" />
+</ItemGroup>
 
-    using var resp = await _http.PostAsync("search/terms", form, ct);
-    await EnsureSuccessAsync(resp, ct); // your existing helper
-
-    var json = await resp.Content.ReadAsStringAsync(ct);
-    if (string.IsNullOrWhiteSpace(json))
-        return Array.Empty<HaTermsSearchItem>();
-
-    // Sometimes HA returns HTML on auth/UA issues—fail fast with a clearer error.
-    var first = json.TrimStart();
-    if (first.StartsWith("<"))
-        throw new HttpRequestException("Hybrid-Analysis returned HTML (likely an auth/UA/permission issue). Body (truncated): " +
-                                       Trunc(first, 400));
-
-    try
-    {
-        // 1) Normal: top-level array
-        if (first.StartsWith("["))
-            return JsonSerializer.Deserialize<List<HaTermsSearchItem>>(json, JsonOpts) ?? new();
-
-        // 2) Sometimes: top-level object (error or wrapped payload)
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-
-        // Common error shape:
-        if (root.TryGetProperty("message", out var msgProp) && msgProp.ValueKind == JsonValueKind.String)
-            throw new HttpRequestException($"Hybrid-Analysis error: {msgProp.GetString()}");
-
-        // Try to find an array under typical keys
-        foreach (var key in new[] { "result", "results", "data", "items", "samples", "reports" })
-        {
-            if (root.TryGetProperty(key, out var arr) && arr.ValueKind == JsonValueKind.Array)
-                return JsonSerializer.Deserialize<List<HaTermsSearchItem>>(arr.GetRawText(), JsonOpts) ?? new();
-        }
-
-        // Fall back: if there’s a single item-like object, try to coerce it into a singleton list
-        if (root.ValueKind == JsonValueKind.Object)
-        {
-            var single = JsonSerializer.Deserialize<HaTermsSearchItem>(json, JsonOpts);
-            if (single is not null)
-                return new List<HaTermsSearchItem> { single };
-        }
-
-        // Nothing matched — surface something useful for debugging
-        throw new JsonException("Unexpected /search/terms JSON shape: " + Trunc(first, 400));
-    }
-    catch (JsonException ex)
-    {
-        throw new JsonException("Failed to parse /search/terms response. Ex: " + ex.Message +
-                                " Body (truncated): " + Trunc(first, 400));
-    }
-
-    static string Trunc(string s, int max) => s.Length <= max ? s : s[..max] + " …";
-}
+<!-- (Optional) belt-and-suspenders -->
+<ItemGroup>
+  <None   Update="soctools.db-shm" Watch="false" />
+  <None   Update="soctools.db-wal" Watch="false" />
+  <Content Update="soctools.db-shm" Watch="false" />
+  <Content Update="soctools.db-wal" Watch="false" />
+</ItemGroup>
