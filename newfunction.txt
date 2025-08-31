@@ -1,28 +1,66 @@
-<!-- Exclude SQLite WAL/JOURNAL files from dotnet watch -->
+<!-- Exclude logs and SQLite temp/journal files from dotnet watch -->
 <ItemGroup Condition="'$(DotNetWatchBuild)'=='true'">
-  <!-- Specific files at project root -->
-  <None Remove="soctools.db-shm" />
-  <None Remove="soctools.db-wal" />
-  <Content Remove="soctools.db-shm" />
-  <Content Remove="soctools.db-wal" />
-  <AdditionalFiles Remove="soctools.db-shm" />
-  <AdditionalFiles Remove="soctools.db-wal" />
-  <Watch Remove="soctools.db-shm" />
-  <Watch Remove="soctools.db-wal" />
 
-  <!-- (Optional) catch all SQLite temp files anywhere under the project -->
-  <None Remove="**\*.db-shm" />
+  <!-- Folders: logs/ and .logs/ -->
+  <None Remove="logs\**\*" />
+  <Content Remove="logs\**\*" />
+  <Compile Remove="logs\**\*" />
+  <EmbeddedResource Remove="logs\**\*" />
+  <Watch Remove="logs\**\*" />
+
+  <None Remove=".logs\**\*" />
+  <Content Remove=".logs\**\*" />
+  <Watch Remove=".logs\**\*" />
+
+  <!-- Any .log files anywhere -->
+  <None Remove="**\*.log" />
+  <Content Remove="**\*.log" />
+  <Watch Remove="**\*.log" />
+
+  <!-- SQLite write-ahead log & shared memory -->
   <None Remove="**\*.db-wal" />
-  <Content Remove="**\*.db-shm" />
+  <None Remove="**\*.db-shm" />
   <Content Remove="**\*.db-wal" />
-  <Watch Remove="**\*.db-shm" />
+  <Content Remove="**\*.db-shm" />
   <Watch Remove="**\*.db-wal" />
+  <Watch Remove="**\*.db-shm" />
+
+  <!-- SQLite journal patterns (covering .db/.sqlite/.sqlite3 naming) -->
+  <None Remove="**\*-journal" />
+  <None Remove="**\*.db-journal" />
+  <None Remove="**\*.sqlite-journal" />
+  <None Remove="**\*.sqlite3-journal" />
+  <Content Remove="**\*-journal" />
+  <Content Remove="**\*.db-journal" />
+  <Content Remove="**\*.sqlite-journal" />
+  <Content Remove="**\*.sqlite3-journal" />
+  <Watch Remove="**\*-journal" />
+  <Watch Remove="**\*.db-journal" />
+  <Watch Remove="**\*.sqlite-journal" />
+  <Watch Remove="**\*.sqlite3-journal" />
+
+  <!-- Also cover sqlite-wal/shm with .sqlite/.sqlite3 base names -->
+  <None Remove="**\*.sqlite-wal" />
+  <None Remove="**\*.sqlite-shm" />
+  <None Remove="**\*.sqlite3-wal" />
+  <None Remove="**\*.sqlite3-shm" />
+  <Content Remove="**\*.sqlite-wal" />
+  <Content Remove="**\*.sqlite-shm" />
+  <Content Remove="**\*.sqlite3-wal" />
+  <Content Remove="**\*.sqlite3-shm" />
+  <Watch Remove="**\*.sqlite-wal" />
+  <Watch Remove="**\*.sqlite-shm" />
+  <Watch Remove="**\*.sqlite3-wal" />
+  <Watch Remove="**\*.sqlite3-shm" />
+
 </ItemGroup>
 
-<!-- (Optional) belt-and-suspenders -->
+<!-- Optional belt-and-suspenders: mark as not-watchable even outside watch builds -->
 <ItemGroup>
-  <None   Update="soctools.db-shm" Watch="false" />
-  <None   Update="soctools.db-wal" Watch="false" />
-  <Content Update="soctools.db-shm" Watch="false" />
-  <Content Update="soctools.db-wal" Watch="false" />
+  <None   Update="logs\**\*" Watch="false" />
+  <Content Update="logs\**\*" Watch="false" />
+  <None   Update="**\*.log"  Watch="false" />
+  <Content Update="**\*.log"  Watch="false" />
+  <None   Update="**\*.db-wal;**\*.db-shm;**\*-journal;**\*.db-journal;**\*.sqlite-journal;**\*.sqlite3-journal;**\*.sqlite-wal;**\*.sqlite-shm;**\*.sqlite3-wal;**\*.sqlite3-shm" Watch="false" />
+  <Content Update="**\*.db-wal;**\*.db-shm;**\*-journal;**\*.db-journal;**\*.sqlite-journal;**\*.sqlite3-journal;**\*.sqlite-wal;**\*.sqlite-shm;**\*.sqlite3-wal;**\*.sqlite3-shm" Watch="false" />
 </ItemGroup>
