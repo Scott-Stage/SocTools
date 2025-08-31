@@ -1,155 +1,89 @@
-Great—your setup (one service per API, each with multiple endpoint methods) is a perfect fit for **typed HttpClient** in Blazor Server. Give each service its **own HttpClient** with its own **BaseAddress** via `AddHttpClient<TService>()`. Then inject that `HttpClient` into the service’s constructor. No dispose needed; DI + factory manage lifetimes safely.
+That exception means your call used a **relative URL while `HttpClient.BaseAddress` was null**, or you passed a string that isn’t a valid URI. Fix it by (1) ensuring each client has a BaseAddress, and (2) only passing **relative, URL-safe** paths to that client.
 
-Below is a complete, copy-pasteable pattern.
+# 1) Set BaseAddress per API (Blazor Server, typed clients)
 
-# appsettings.json
-
-```json
-{
-  "Apis": {
-    "Api1": { "BaseUrl": "https://api1.example.com/" },
-    "Api2": { "BaseUrl": "https://api2.example.com/" }
-  }
-}
-```
-
-# Program.cs (Blazor Server)
+**Program.cs**
 
 ```csharp
-var builder = WebApplication.CreateBuilder(args);
 var cfg = builder.Configuration;
 
-// Optional per-API handlers (auth, retry, etc.)
-builder.Services.AddTransient<Api1AuthHandler>();
-builder.Services.AddTransient<Api2AuthHandler>();
-
-// Typed clients: one per service, each with its own BaseAddress + handlers
-builder.Services.AddHttpClient<Api1Service>((sp, c) =>
+builder.Services.AddHttpClient<Api1Service>(c =>
 {
-    c.BaseAddress = new Uri(cfg["Apis:Api1:BaseUrl"]!);
+    c.BaseAddress = RequireHttpsBase(cfg["Apis:Api1:BaseUrl"]); // e.g. "https://api1.example.com/"
     c.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-})
-.AddHttpMessageHandler<Api1AuthHandler>(); // remove if not needed
+});
 
-builder.Services.AddHttpClient<Api2Service>((sp, c) =>
+builder.Services.AddHttpClient<Api2Service>(c =>
 {
-    c.BaseAddress = new Uri(cfg["Apis:Api2:BaseUrl"]!);
+    c.BaseAddress = RequireHttpsBase(cfg["Apis:Api2:BaseUrl"]); // e.g. "https://api2.example.com/"
     c.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-})
-.AddHttpMessageHandler<Api2AuthHandler>(); // remove if not needed
+});
 
-// Your services are scoped (recommended for Blazor Server)
-builder.Services.AddScoped<Api1Service>();
-builder.Services.AddScoped<Api2Service>();
-
-var app = builder.Build();
-app.Run();
-
-// Example bearer handlers (optional)
-public sealed class Api1AuthHandler : DelegatingHandler
+// Fail fast if config is missing/invalid
+static Uri RequireHttpsBase(string? url)
 {
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage r, CancellationToken ct)
-    {
-        // attach a token/header specific to API1 if needed
-        // r.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        return base.SendAsync(r, ct);
-    }
-}
-public sealed class Api2AuthHandler : DelegatingHandler
-{
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage r, CancellationToken ct)
-    {
-        // attach a token/header specific to API2 if needed
-        return base.SendAsync(r, ct);
-    }
+    if (!Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var u) ||
+        (u.Scheme != Uri.UriSchemeHttps && u.Scheme != Uri.UriSchemeHttp))
+        throw new InvalidOperationException($"Invalid API BaseUrl: '{url}' (must be absolute, include http/https).");
+    return u;
 }
 ```
 
-# api1service.cs (multiple endpoint methods for API 1)
+# 2) Pass **relative** and **encoded** paths from services
+
+**api1service.cs**
 
 ```csharp
+using Microsoft.AspNetCore.WebUtilities; // QueryHelpers
 using System.Net.Http.Json;
-using System.Text.Json;
 
 public sealed class Api1Service
 {
     private readonly HttpClient _http;
-    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
-
-    public Api1Service(HttpClient http) => _http = http;
+    public Api1Service(HttpClient http)
+    {
+        _http = http;
+        if (_http.BaseAddress is null)
+            throw new InvalidOperationException("Api1Service HttpClient.BaseAddress is null. Check Program.cs/config.");
+    }
 
     // GET https://api1.../v1/items
-    public async Task<List<ItemDto>> GetItemsAsync(CancellationToken ct = default) =>
-        await _http.GetFromJsonAsync<List<ItemDto>>("v1/items", JsonOpts, ct) ?? new();
+    public Task<List<ItemDto>?> GetItemsAsync(CancellationToken ct = default) =>
+        _http.GetFromJsonAsync<List<ItemDto>>("v1/items", ct);
 
     // GET https://api1.../v1/items/{id}
-    public async Task<ItemDto?> GetItemAsync(string id, CancellationToken ct = default) =>
-        await _http.GetFromJsonAsync<ItemDto>($"v1/items/{Uri.EscapeDataString(id)}", JsonOpts, ct);
-
-    // POST https://api1.../v1/items
-    public async Task<ItemDto> CreateItemAsync(CreateItemDto dto, CancellationToken ct = default)
+    public Task<ItemDto?> GetItemAsync(string id, CancellationToken ct = default)
     {
-        using var resp = await _http.PostAsJsonAsync("v1/items", dto, JsonOpts, ct);
-        resp.EnsureSuccessStatusCode();
-        return (await resp.Content.ReadFromJsonAsync<ItemDto>(JsonOpts, ct))!;
+        var safeId = Uri.EscapeDataString(id ?? string.Empty);
+        return _http.GetFromJsonAsync<ItemDto>($"v1/items/{safeId}", ct);
     }
 
-    // Streaming download safely (no ObjectDisposed issues)
-    // GET https://api1.../v1/reports/{id}/download
-    public async Task DownloadReportAsync(string id, Stream destination, CancellationToken ct = default)
+    // GET https://api1.../v1/search?q=your+query
+    public Task<SearchResult?> SearchAsync(string q, CancellationToken ct = default)
     {
-        using var resp = await _http.GetAsync($"v1/reports/{Uri.EscapeDataString(id)}/download",
-                                              HttpCompletionOption.ResponseHeadersRead, ct);
-        resp.EnsureSuccessStatusCode();
-        await using var s = await resp.Content.ReadAsStreamAsync(ct);
-        await s.CopyToAsync(destination, ct);
+        var url = QueryHelpers.AddQueryString("v1/search", new() { ["q"] = q ?? string.Empty });
+        return _http.GetFromJsonAsync<SearchResult>(url, ct);
     }
 }
-
-// Example DTOs
-public sealed class ItemDto { public string? Id { get; set; } public string? Name { get; set; } }
-public sealed class CreateItemDto { public string? Name { get; set; } }
 ```
 
-# api2service.cs (multiple endpoint methods for API 2)
+# 3) Quick “why it still breaks” checklist
+
+* **Config key missing/empty** → BaseAddress stays null. Verify with:
+
+  ```csharp
+  Console.WriteLine($"Api1 Base: {builder.Configuration["Apis:Api1:BaseUrl"]}");
+  ```
+* **You passed an absolute URL string** *without* BaseAddress → fine; but if the string is malformed (no scheme, spaces, backslashes), you’ll get this error. Prefer `new Uri(string, UriKind.Absolute)` validation or just set BaseAddress and pass relative paths.
+* **Illegal characters** in path/query → always use `Uri.EscapeDataString` for segments and `QueryHelpers.AddQueryString` for queries.
+* **Empty or whitespace path** → calling `GetAsync("")` is valid (hits BaseAddress), but `null` or strings with control chars will throw.
+
+# 4) Log the final URL during debugging
 
 ```csharp
-using System.Net.Http.Json;
-using System.Text.Json;
-
-public sealed class Api2Service
-{
-    private readonly HttpClient _http;
-    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
-
-    public Api2Service(HttpClient http) => _http = http;
-
-    public async Task<SearchResultDto> SearchAsync(string q, CancellationToken ct = default)
-        => (await _http.GetFromJsonAsync<SearchResultDto>($"api/search?q={Uri.EscapeDataString(q)}", JsonOpts, ct))!;
-
-    public async Task<bool> DeleteAsync(string id, CancellationToken ct = default)
-    {
-        using var resp = await _http.DeleteAsync($"api/resources/{Uri.EscapeDataString(id)}", ct);
-        return resp.IsSuccessStatusCode;
-    }
-}
-
-public sealed class SearchResultDto
-{
-    public List<SearchHitDto> Hits { get; set; } = new();
-}
-public sealed class SearchHitDto { public string? Id { get; set; } public string? Title { get; set; } }
+var rel = QueryHelpers.AddQueryString("v1/search", new() { ["q"] = q });
+Console.WriteLine($"[Api1] GET {_http.BaseAddress}{rel}");
+using var resp = await _http.GetAsync(rel, ct);
 ```
 
-## Why this avoids “disposed HttpClient”
-
-* Each service gets a **typed** `HttpClient` from DI with the correct **BaseAddress**, and **you never dispose it**.
-* Streaming methods fully consume the content **before** leaving the method, so the `HttpResponseMessage` can be disposed safely.
-* Services are **Scoped**, which is the right lifetime for Blazor Server components.
-
-## Variations
-
-* If you prefer **named clients**: register `AddHttpClient("Api1", …)`, `AddHttpClient("Api2", …)` and inject `IHttpClientFactory` into each service, calling `_factory.CreateClient("Api1")` or `"Api2"` inside the methods.
-* Per-API auth/retry: attach different `DelegatingHandler`s or Polly policies to each `AddHttpClient`.
-
-If you paste your current `Program.cs` and one of your `apiXservice.cs` files, I can convert them directly to this pattern with your actual endpoints/DTOs.
+Do the three things above—**valid BaseAddress**, **relative+encoded paths**, **guard in the service constructor**—and that “invalid request URI” error will go away. If you share one failing call (the exact string you pass to `HttpClient`) and your `Apis:Api1:BaseUrl` value, I’ll pinpoint the exact fix.
