@@ -1,7 +1,18 @@
-<!-- Exclude logs and SQLite temp/journal files from dotnet watch -->
-<ItemGroup Condition="'$(DotNetWatchBuild)'=='true'">
+<PropertyGroup>
+  <!-- Keep these out of ALL item globs (applies to normal builds & watch) -->
+  <DefaultItemExcludes>
+    $(DefaultItemExcludes);
+    logs\**\*;
+    .logs\**\*;
+    **\*.log;
+    **\*.db-wal;**\*.db-shm;**\*-journal;
+    **\*.db-journal;**\*.sqlite-journal;**\*.sqlite3-journal;
+    **\*.sqlite-wal;**\*.sqlite-shm;**\*.sqlite3-wal;**\*.sqlite3-shm
+  </DefaultItemExcludes>
+</PropertyGroup>
 
-  <!-- Folders: logs/ and .logs/ -->
+<!-- Extra safety just for dotnet watch runs -->
+<ItemGroup Condition="'$(DotNetWatchBuild)'=='true'">
   <None Remove="logs\**\*" />
   <Content Remove="logs\**\*" />
   <Compile Remove="logs\**\*" />
@@ -12,12 +23,10 @@
   <Content Remove=".logs\**\*" />
   <Watch Remove=".logs\**\*" />
 
-  <!-- Any .log files anywhere -->
   <None Remove="**\*.log" />
   <Content Remove="**\*.log" />
   <Watch Remove="**\*.log" />
 
-  <!-- SQLite write-ahead log & shared memory -->
   <None Remove="**\*.db-wal" />
   <None Remove="**\*.db-shm" />
   <Content Remove="**\*.db-wal" />
@@ -25,7 +34,6 @@
   <Watch Remove="**\*.db-wal" />
   <Watch Remove="**\*.db-shm" />
 
-  <!-- SQLite journal patterns (covering .db/.sqlite/.sqlite3 naming) -->
   <None Remove="**\*-journal" />
   <None Remove="**\*.db-journal" />
   <None Remove="**\*.sqlite-journal" />
@@ -39,7 +47,6 @@
   <Watch Remove="**\*.sqlite-journal" />
   <Watch Remove="**\*.sqlite3-journal" />
 
-  <!-- Also cover sqlite-wal/shm with .sqlite/.sqlite3 base names -->
   <None Remove="**\*.sqlite-wal" />
   <None Remove="**\*.sqlite-shm" />
   <None Remove="**\*.sqlite3-wal" />
@@ -52,15 +59,4 @@
   <Watch Remove="**\*.sqlite-shm" />
   <Watch Remove="**\*.sqlite3-wal" />
   <Watch Remove="**\*.sqlite3-shm" />
-
-</ItemGroup>
-
-<!-- Optional belt-and-suspenders: mark as not-watchable even outside watch builds -->
-<ItemGroup>
-  <None   Update="logs\**\*" Watch="false" />
-  <Content Update="logs\**\*" Watch="false" />
-  <None   Update="**\*.log"  Watch="false" />
-  <Content Update="**\*.log"  Watch="false" />
-  <None   Update="**\*.db-wal;**\*.db-shm;**\*-journal;**\*.db-journal;**\*.sqlite-journal;**\*.sqlite3-journal;**\*.sqlite-wal;**\*.sqlite-shm;**\*.sqlite3-wal;**\*.sqlite3-shm" Watch="false" />
-  <Content Update="**\*.db-wal;**\*.db-shm;**\*-journal;**\*.db-journal;**\*.sqlite-journal;**\*.sqlite3-journal;**\*.sqlite-wal;**\*.sqlite-shm;**\*.sqlite3-wal;**\*.sqlite3-shm" Watch="false" />
 </ItemGroup>
