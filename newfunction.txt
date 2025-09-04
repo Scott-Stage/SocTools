@@ -1,1 +1,1 @@
-http://170.9.26.247:3000/d/8UJkxcrNz/smishing?orgId=1&refresh=30s
+http://170.9.26.247:3000/public-dashboards/8fba9671216d4c76b4bc865cb31e73a6
