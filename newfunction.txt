@@ -1,62 +1,38 @@
-Got it—here’s a super-small helper that only does the Contains shape: (?i).*tok.*.
-
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Text.RegularExpressions;
 
-public static class WatchlistContains
+public static class WatchlistPatterns
 {
-    /// Build a case-insensitive "contains" regex from plain text.
-    /// plain: literal text (no regex). Example: "ftb" -> (?i).*ftb.*
-    public static string Wrap(string plain)
+    /// Case-insensitive "contains this exact literal substring".
+    /// Example: "ca." -> (?i).*ca\..*
+    public static string WrapContainsLiteral(string plain)
     {
-        if (plain is null) throw new ArgumentNullException(nameof(plain));
-        var tok = Regex.Escape(plain.Trim());
-        if (tok.Length == 0) throw new ArgumentException("Empty value", nameof(plain));
+        if (string.IsNullOrWhiteSpace(plain))
+            throw new ArgumentException("Empty value", nameof(plain));
+
+        var tok = Regex.Escape(plain.Trim());        // ensures '.' is literal
         return $"(?i).*{tok}.*";
     }
 
-    /// Try to extract the plain token from a contains-regex of the exact form (?i).*<tok>.* .
-    /// Returns false for anything that isn't exactly that shape.
-    public static bool TryUnwrap(string pattern, out string plain)
+    /// Case-insensitive "equals this exact literal string".
+    /// Example: "ftb.ca.gov" -> (?i)^ftb\.ca\.gov$
+    public static string WrapEqualsLiteral(string plain)
+    {
+        if (string.IsNullOrWhiteSpace(plain))
+            throw new ArgumentException("Empty value", nameof(plain));
+
+        var tok = Regex.Escape(plain.Trim());
+        return $"(?i)^{tok}$";
+    }
+
+    /// Optional: Try to unwrap only our contains shape back to the plain token.
+    public static bool TryUnwrapContains(string pattern, out string plain)
     {
         plain = "";
         if (string.IsNullOrWhiteSpace(pattern)) return false;
-
         var m = Regex.Match(pattern.Trim(), @"^\(\?i\)\.\*(?<tok>.+)\.\*$");
         if (!m.Success) return false;
-
-        // The token was regex-escaped when we wrapped it; unescape back to plain text.
         plain = Regex.Unescape(m.Groups["tok"].Value);
         return true;
     }
-
-    /// Convenience: map API `lines` -> displayable plain strings (fallback to raw if not our shape).
-    public static List<string> ToPlainList(IEnumerable<string>? lines)
-        => (lines ?? Enumerable.Empty<string>())
-            .Select(l => TryUnwrap(l, out var p) ? p : l)
-            .ToList();
-
-    /// Convenience: map user-entered plain strings -> regex lines for PUT/POST.
-    public static List<string> ToRegexList(IEnumerable<string> plains)
-        => plains.Select(Wrap).ToList();
 }
-
-Examples
-// Plain -> regex
-var rx = WatchlistContains.Wrap("ftb");            // "(?i).*ftb.*"
-
-// Regex -> plain (only our exact shape)
-WatchlistContains.TryUnwrap(@"(?i).*\.(gov|ca).*", out var _); // false
-WatchlistContains.TryUnwrap(@"(?i).*ftb.*", out var token);    // true, token == "ftb"
-
-// For your API objects:
-var regexLines = WatchlistContains.ToRegexList(new[] { "ftb", "gov", "fraud-warning" });
-// -> ["(?i).*ftb.*", "(?i).*gov.*", "(?i).*fraud\-warning.*"]
-
-var plainForUi = WatchlistContains.ToPlainList(state.Lines);
-// -> ["ftb", "gov", ...]  (non-matching lines are returned as-is)
-
-
-Use Wrap(...) when adding a rule (POST/PUT), and ToPlainList(...) when you read /watchlist and want to show human-friendly text.
