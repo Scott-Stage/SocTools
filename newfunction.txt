@@ -1,1 +1,92 @@
-http://170.9.26.247:3000/public-dashboards/8fba9671216d4c76b4bc865cb31e73a6
+Here you go—each cURL mapped to a clean HttpClient call. Copy/paste and adjust the base URL.
+
+using System;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+
+// DTOs (adjust if your API returns different fields)
+public sealed record WatchlistState(string? Pattern, string[]? Lines, string? Source);
+
+public static class WatchlistApi
+{
+    static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true
+    };
+
+    public static HttpClient CreateClient(string hostWithPort = "http://<host>:9101/")
+        => new() { BaseAddress = new Uri(hostWithPort) };
+
+    // GET current state
+    public static async Task<WatchlistState?> GetAsync(HttpClient http, CancellationToken ct = default)
+        => await http.GetFromJsonAsync<WatchlistState>("watchlist", JsonOpts, ct);
+
+    // PUT replace entire list
+    public static async Task<HttpResponseMessage> ReplaceAsync(HttpClient http, string[] lines, CancellationToken ct = default)
+        => await http.PutAsJsonAsync("watchlist", new { lines }, JsonOpts, ct);
+
+    // POST append single rule
+    public static async Task<HttpResponseMessage> AppendAsync(HttpClient http, string line, CancellationToken ct = default)
+        => await http.PostAsJsonAsync("watchlist", new { line }, JsonOpts, ct);
+
+    // DELETE one exact rule (?line=...)
+    public static async Task<HttpResponseMessage> DeleteOneAsync(HttpClient http, string line, CancellationToken ct = default)
+        => await http.DeleteAsync($"watchlist?line={Uri.EscapeDataString(line)}", ct);
+
+    // DELETE all rules
+    public static async Task<HttpResponseMessage> ClearAsync(HttpClient http, CancellationToken ct = default)
+        => await http.DeleteAsync("watchlist", ct);
+
+    // POST test matches (response shape may vary; use JsonDocument if unsure)
+    public static async Task<JsonDocument> TestAsync(HttpClient http, string[] samples, CancellationToken ct = default)
+    {
+        using var resp = await http.PostAsJsonAsync("watchlist/test", new { samples }, JsonOpts, ct);
+        resp.EnsureSuccessStatusCode();
+        await using var s = await resp.Content.ReadAsStreamAsync(ct);
+        return await JsonDocument.ParseAsync(s, cancellationToken: ct);
+    }
+}
+
+One-to-one examples
+var http = WatchlistApi.CreateClient("http://<host>:9101/");
+
+// 1) GET state
+var state = await WatchlistApi.GetAsync(http);
+
+// 2) PUT replace list
+await WatchlistApi.ReplaceAsync(http, new[]
+{
+    @"(^|\.)ftb(\.|-|$)",
+    @"\.(gov|ca)$"
+});
+
+// 3) POST append one
+await WatchlistApi.AppendAsync(http, @"example\.org$");
+
+// 4) DELETE one exact rule
+await WatchlistApi.DeleteOneAsync(http, @"\.(gov|ca)$");
+
+// 5) DELETE all rules
+await WatchlistApi.ClearAsync(http);
+
+// 6) POST test matches
+using var testJson = await WatchlistApi.TestAsync(http, new[]
+{
+    "ftb.gov", "x-ftb-ca.com", "example.org"
+});
+Console.WriteLine(testJson.RootElement.ToString());
+
+Using IHttpClientFactory (optional)
+// Program.cs / DI
+services.AddHttpClient("Watchlist", c => c.BaseAddress = new Uri("http://<host>:9101/"));
+
+// Usage
+var http = httpClientFactory.CreateClient("Watchlist");
+var state = await WatchlistApi.GetAsync(http);
+
+
+Tip: Regex query values must be URL-encoded when used in ?line=.... That’s why Uri.EscapeDataString(...) is used above.
