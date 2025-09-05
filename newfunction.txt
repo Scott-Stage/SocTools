@@ -1,77 +1,62 @@
+Got it—here’s a super-small helper that only does the Contains shape: (?i).*tok.*.
+
 using System;
 using System.Collections.Generic;
-using System.Net.Http;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Linq;
+using System.Text.RegularExpressions;
 
-// Matches the JSON your endpoint returns:
-// {"source":"file","pattern":"...","lines":["rule1","rule2", ...]}
-public sealed class WatchlistState
+public static class WatchlistContains
 {
-    [JsonPropertyName("pattern")] public string? Pattern { get; init; }
-    [JsonPropertyName("lines")]   public List<string>? Lines { get; init; }
-    [JsonPropertyName("source")]  public string? Source { get; init; }
+    /// Build a case-insensitive "contains" regex from plain text.
+    /// plain: literal text (no regex). Example: "ftb" -> (?i).*ftb.*
+    public static string Wrap(string plain)
+    {
+        if (plain is null) throw new ArgumentNullException(nameof(plain));
+        var tok = Regex.Escape(plain.Trim());
+        if (tok.Length == 0) throw new ArgumentException("Empty value", nameof(plain));
+        return $"(?i).*{tok}.*";
+    }
+
+    /// Try to extract the plain token from a contains-regex of the exact form (?i).*<tok>.* .
+    /// Returns false for anything that isn't exactly that shape.
+    public static bool TryUnwrap(string pattern, out string plain)
+    {
+        plain = "";
+        if (string.IsNullOrWhiteSpace(pattern)) return false;
+
+        var m = Regex.Match(pattern.Trim(), @"^\(\?i\)\.\*(?<tok>.+)\.\*$");
+        if (!m.Success) return false;
+
+        // The token was regex-escaped when we wrapped it; unescape back to plain text.
+        plain = Regex.Unescape(m.Groups["tok"].Value);
+        return true;
+    }
+
+    /// Convenience: map API `lines` -> displayable plain strings (fallback to raw if not our shape).
+    public static List<string> ToPlainList(IEnumerable<string>? lines)
+        => (lines ?? Enumerable.Empty<string>())
+            .Select(l => TryUnwrap(l, out var p) ? p : l)
+            .ToList();
+
+    /// Convenience: map user-entered plain strings -> regex lines for PUT/POST.
+    public static List<string> ToRegexList(IEnumerable<string> plains)
+        => plains.Select(Wrap).ToList();
 }
 
-public static class WatchlistHelpers
-{
-    private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web)
-    {
-        AllowTrailingCommas = true,
-        ReadCommentHandling = JsonCommentHandling.Skip,
-        WriteIndented = false
-    };
+Examples
+// Plain -> regex
+var rx = WatchlistContains.Wrap("ftb");            // "(?i).*ftb.*"
 
-    /// Convert a WatchlistState into a List<string>.
-    /// Uses Lines when present; falls back to the single combined Pattern.
-    public static List<string> ToRuleList(WatchlistState? state)
-    {
-        var list = new List<string>();
-        if (state is null) return list;
+// Regex -> plain (only our exact shape)
+WatchlistContains.TryUnwrap(@"(?i).*\.(gov|ca).*", out var _); // false
+WatchlistContains.TryUnwrap(@"(?i).*ftb.*", out var token);    // true, token == "ftb"
 
-        if (state.Lines is { Count: > 0 })
-        {
-            foreach (var s in state.Lines)
-                if (!string.IsNullOrWhiteSpace(s))
-                    list.Add(s.Trim());
-        }
-        else if (!string.IsNullOrWhiteSpace(state.Pattern))
-        {
-            list.Add(state.Pattern!.Trim());
-        }
+// For your API objects:
+var regexLines = WatchlistContains.ToRegexList(new[] { "ftb", "gov", "fraud-warning" });
+// -> ["(?i).*ftb.*", "(?i).*gov.*", "(?i).*fraud\-warning.*"]
 
-        return list;
-    }
+var plainForUi = WatchlistContains.ToPlainList(state.Lines);
+// -> ["ftb", "gov", ...]  (non-matching lines are returned as-is)
 
-    /// Parse JSON text into a List<string>.
-    public static List<string> ToRuleList(string json)
-    {
-        var state = JsonSerializer.Deserialize<WatchlistState>(json, JsonOpts);
-        return ToRuleList(state);
-    }
 
-    /// Fetch /watchlist and return a List<string>.
-    public static async Task<List<string>> GetRulesAsync(HttpClient http, CancellationToken ct = default)
-    {
-        using var resp = await http.GetAsync("watchlist", ct);
-        resp.EnsureSuccessStatusCode();
-        await using var s = await resp.Content.ReadAsStreamAsync(ct);
-        var state = await JsonSerializer.DeserializeAsync<WatchlistState>(s, JsonOpts, ct);
-        return ToRuleList(state);
-    }
-
-    /// Add rules from WatchlistState into an existing List<string> (optional de-dupe).
-    public static void AddRules(List<string> destination, WatchlistState? state, bool dedupe = true)
-    {
-        if (destination is null) throw new ArgumentNullException(nameof(destination));
-        var rules = ToRuleList(state);
-
-        if (!dedupe) { destination.AddRange(rules); return; }
-
-        var seen = new HashSet<string>(destination, StringComparer.Ordinal);
-        foreach (var r in rules)
-            if (seen.Add(r)) destination.Add(r);
-    }
-}
+Use Wrap(...) when adding a rule (POST/PUT), and ToPlainList(...) when you read /watchlist and want to show human-friendly text.
