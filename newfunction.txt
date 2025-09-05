@@ -1,38 +1,82 @@
 using System;
 using System.Text.RegularExpressions;
 
-public static class WatchlistPatterns
+public static class WatchlistRegexHelper
 {
-    /// Case-insensitive "contains this exact literal substring".
-    /// Example: "ca." -> (?i).*ca\..*
-    public static string WrapContainsLiteral(string plain)
+    /// <summary>
+    /// Build a case-insensitive "contains" regex around a plain text fragment.
+    /// Example: "ftb.gov" -> (?i).*\Qftb.gov\E.*
+    /// </summary>
+    public static string BuildContainsRegex(string plain)
     {
-        if (string.IsNullOrWhiteSpace(plain))
-            throw new ArgumentException("Empty value", nameof(plain));
-
-        var tok = Regex.Escape(plain.Trim());        // ensures '.' is literal
-        return $"(?i).*{tok}.*";
+        var core = (plain ?? string.Empty).Trim();
+        // Regex.Escape escapes specials (e.g., "." -> "\.").
+        // \Q ... \E is also fine, but Escape is clearer here.
+        var escaped = Regex.Escape(core);
+        return $"(?i).*{escaped}.*";
     }
 
-    /// Case-insensitive "equals this exact literal string".
-    /// Example: "ftb.ca.gov" -> (?i)^ftb\.ca\.gov$
-    public static string WrapEqualsLiteral(string plain)
+    /// <summary>
+    /// Try to unwrap a simple contains pattern back to plain text.
+    /// Returns true only for patterns like:
+    ///   (?i).*<literal or escaped>.*   (optionally with ^ at start / $ at end)
+    /// Special-case: keeps a trailing literal dot if the regex ends with \. or \.*
+    ///   (?i).*ftbgov\.*  -> "ftbgov."
+    ///   (?i).*example\.org.* -> "example.org"
+    /// </summary>
+    public static bool TryPlainFromContainsRegex(string pattern, out string plain)
     {
-        if (string.IsNullOrWhiteSpace(plain))
-            throw new ArgumentException("Empty value", nameof(plain));
-
-        var tok = Regex.Escape(plain.Trim());
-        return $"(?i)^{tok}$";
-    }
-
-    /// Optional: Try to unwrap only our contains shape back to the plain token.
-    public static bool TryUnwrapContains(string pattern, out string plain)
-    {
-        plain = "";
+        plain = string.Empty;
         if (string.IsNullOrWhiteSpace(pattern)) return false;
-        var m = Regex.Match(pattern.Trim(), @"^\(\?i\)\.\*(?<tok>.+)\.\*$");
-        if (!m.Success) return false;
-        plain = Regex.Unescape(m.Groups["tok"].Value);
+
+        var s = pattern.Trim();
+
+        // 1) Strip a single leading inline flag group like (?i), (?im), etc.
+        s = Regex.Replace(s, @"^\(\?[A-Za-z-]+\)", string.Empty);
+
+        // 2) Optional anchors
+        s = Regex.Replace(s, @"^\^", string.Empty);
+        s = Regex.Replace(s, @"\$$", string.Empty);
+
+        // Must start/end with .*
+        if (!Regex.IsMatch(s, @"^\.\*") || !Regex.IsMatch(s, @"\.\*$"))
+            return false;
+
+        // 3) Remove leading/trailing .*
+        s = Regex.Replace(s, @"^\.\*", string.Empty);
+        s = Regex.Replace(s, @"\.\*$", string.Empty);
+
+        // If pattern is now empty, treat as failure
+        if (s.Length == 0) return false;
+
+        // Bail if this looks complex (alternations, groups, lookarounds, etc.)
+        // We allow escaped specials and literal text only.
+        // If you need to allow more, relax this.
+        if (Regex.IsMatch(s, @"(?<!\\)[\(\)\[\]\|\?\+\{\}]"))
+            return false;
+
+        // 4) Detect trailing literal dot markers and remove them from the core
+        //    We treat \. or \.* (any number of dots) at the end as "keep one '.'"
+        bool trailingDot = false;
+        if (Regex.IsMatch(s, @"\\\.(\*|\{\d+(,\d+)?\})?$"))
+        {
+            trailingDot = true;
+            s = Regex.Replace(s, @"\\\.(\*|\{\d+(,\d+)?\})?$", string.Empty);
+        }
+        else if (s.EndsWith(@"\.")) // simple "\." ending
+        {
+            trailingDot = true;
+            s = s[..^2];
+        }
+
+        // 5) Unescape common escaped specials so plain text looks natural.
+        s = Regex.Replace(s, @"\\([\\\.\*\+\?\^\$\{\}\(\)\[\]\|\-])", "$1");
+
+        if (trailingDot && !s.EndsWith(".", StringComparison.Ordinal))
+            s += ".";
+
+        // All done
+        plain = s;
         return true;
     }
 }
