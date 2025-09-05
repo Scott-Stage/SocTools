@@ -1,23 +1,77 @@
-# Get current state (pattern + lines + source)
-curl -s http://<host>:9101/watchlist | jq
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 
-# Replace entire list with multiple rules (persist to file)
-curl -s -X PUT http://<host>:9101/watchlist \
-  -H 'content-type: application/json' \
-  -d '{"lines":["(^|\\.)ftb(\\.|-|$)","\\.(gov|ca)$"]}'
+// Matches the JSON your endpoint returns:
+// {"source":"file","pattern":"...","lines":["rule1","rule2", ...]}
+public sealed class WatchlistState
+{
+    [JsonPropertyName("pattern")] public string? Pattern { get; init; }
+    [JsonPropertyName("lines")]   public List<string>? Lines { get; init; }
+    [JsonPropertyName("source")]  public string? Source { get; init; }
+}
 
-# Append a single rule (persist)
-curl -s -X POST http://<host>:9101/watchlist \
-  -H 'content-type: application/json' \
-  -d '{"line":"example\\.org$"}'
+public static class WatchlistHelpers
+{
+    private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web)
+    {
+        AllowTrailingCommas = true,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        WriteIndented = false
+    };
 
-# Remove one exact rule (persist)
-curl -s -X DELETE 'http://<host>:9101/watchlist?line=\.(gov|ca)$'
+    /// Convert a WatchlistState into a List<string>.
+    /// Uses Lines when present; falls back to the single combined Pattern.
+    public static List<string> ToRuleList(WatchlistState? state)
+    {
+        var list = new List<string>();
+        if (state is null) return list;
 
-# Clear all rules (persist)
-curl -s -X DELETE http://<host>:9101/watchlist
+        if (state.Lines is { Count: > 0 })
+        {
+            foreach (var s in state.Lines)
+                if (!string.IsNullOrWhiteSpace(s))
+                    list.Add(s.Trim());
+        }
+        else if (!string.IsNullOrWhiteSpace(state.Pattern))
+        {
+            list.Add(state.Pattern!.Trim());
+        }
 
-# Test matches
-curl -s -X POST http://<host>:9101/watchlist/test \
-  -H 'content-type: application/json' \
-  -d '{"samples":["ftb.gov","x-ftb-ca.com","example.org"]}'
+        return list;
+    }
+
+    /// Parse JSON text into a List<string>.
+    public static List<string> ToRuleList(string json)
+    {
+        var state = JsonSerializer.Deserialize<WatchlistState>(json, JsonOpts);
+        return ToRuleList(state);
+    }
+
+    /// Fetch /watchlist and return a List<string>.
+    public static async Task<List<string>> GetRulesAsync(HttpClient http, CancellationToken ct = default)
+    {
+        using var resp = await http.GetAsync("watchlist", ct);
+        resp.EnsureSuccessStatusCode();
+        await using var s = await resp.Content.ReadAsStreamAsync(ct);
+        var state = await JsonSerializer.DeserializeAsync<WatchlistState>(s, JsonOpts, ct);
+        return ToRuleList(state);
+    }
+
+    /// Add rules from WatchlistState into an existing List<string> (optional de-dupe).
+    public static void AddRules(List<string> destination, WatchlistState? state, bool dedupe = true)
+    {
+        if (destination is null) throw new ArgumentNullException(nameof(destination));
+        var rules = ToRuleList(state);
+
+        if (!dedupe) { destination.AddRange(rules); return; }
+
+        var seen = new HashSet<string>(destination, StringComparer.Ordinal);
+        foreach (var r in rules)
+            if (seen.Add(r)) destination.Add(r);
+    }
+}
