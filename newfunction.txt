@@ -1,1 +1,307 @@
-https://170.9.26.247:3000/public-dashboards/b134366d59e645e7a5913c109db3e1c7
+using System;
+using System.Collections.Generic;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace CrowdStrike.FalconX.Models
+{
+    // ---------- Generic API wrappers ----------
+
+    // Works for both /queries/* (resources = string IDs) and /entities/* (resources = objects)
+    public class CsApiResponse<TResource>
+    {
+        [JsonPropertyName("resources")]
+        public List<TResource>? Resources { get; set; }
+
+        [JsonPropertyName("errors")]
+        public List<CsApiError>? Errors { get; set; }
+
+        [JsonPropertyName("meta")]
+        public CsMeta? Meta { get; set; }
+
+        // In case the API returns additional top-level fields
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement>? Additional { get; set; }
+    }
+
+    public class CsApiError
+    {
+        [JsonPropertyName("code")]
+        public string? Code { get; set; }
+
+        [JsonPropertyName("message")]
+        public string? Message { get; set; }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement>? Additional { get; set; }
+    }
+
+    public class CsMeta
+    {
+        [JsonPropertyName("query_time")]
+        public double? QueryTime { get; set; }
+
+        [JsonPropertyName("trace_id")]
+        public string? TraceId { get; set; }
+
+        [JsonPropertyName("powered_by")]
+        public string? PoweredBy { get; set; }
+
+        [JsonPropertyName("pagination")]
+        public CsPagination? Pagination { get; set; }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement>? Additional { get; set; }
+    }
+
+    public class CsPagination
+    {
+        [JsonPropertyName("offset")]
+        public int? Offset { get; set; }
+
+        [JsonPropertyName("limit")]
+        public int? Limit { get; set; }
+
+        [JsonPropertyName("total")]
+        public int? Total { get; set; }
+    }
+
+    // ---------- Entities: Reports (/falconx/entities/reports/v1) ----------
+
+    public class FalconXReport
+    {
+        [JsonPropertyName("id")]
+        public string? Id { get; set; }
+
+        [JsonPropertyName("cid")]
+        public string? Cid { get; set; }
+
+        [JsonPropertyName("created_timestamp")]
+        public DateTimeOffset? CreatedTimestamp { get; set; }
+
+        [JsonPropertyName("index_timestamp")]
+        public DateTimeOffset? IndexTimestamp { get; set; }
+
+        [JsonPropertyName("origin")]
+        public string? Origin { get; set; }
+
+        [JsonPropertyName("user")]
+        public string? User { get; set; }
+
+        [JsonPropertyName("user_id")]
+        public string? UserId { get; set; }
+
+        [JsonPropertyName("user_uuid")]
+        public string? UserUuid { get; set; }
+
+        [JsonPropertyName("verdict")]
+        public string? Verdict { get; set; }
+
+        // Artifact IDs commonly present on full reports
+        [JsonPropertyName("ioc_report_broad_csv_artifact_id")]
+        public string? IocReportBroadCsvArtifactId { get; set; }
+
+        [JsonPropertyName("ioc_report_broad_json_artifact_id")]
+        public string? IocReportBroadJsonArtifactId { get; set; }
+
+        [JsonPropertyName("ioc_report_broad_stix_artifact_id")]
+        public string? IocReportBroadStixArtifactId { get; set; }
+
+        [JsonPropertyName("ioc_report_strict_csv_artifact_id")]
+        public string? IocReportStrictCsvArtifactId { get; set; }
+
+        [JsonPropertyName("ioc_report_strict_json_artifact_id")]
+        public string? IocReportStrictJsonArtifactId { get; set; }
+
+        [JsonPropertyName("ioc_report_strict_stix_artifact_id")]
+        public string? IocReportStrictStixArtifactId { get; set; }
+
+        [JsonPropertyName("ioc_report_maec_artifact_id")]
+        public string? IocReportMaecArtifactId { get; set; }
+
+        // One report can contain multiple sandbox runs / environments
+        [JsonPropertyName("sandbox")]
+        public List<FalconXSandboxRun>? Sandbox { get; set; }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement>? Additional { get; set; }
+    }
+
+    public class FalconXSandboxRun
+    {
+        [JsonPropertyName("sha256")]
+        public string? Sha256 { get; set; }
+
+        [JsonPropertyName("environment_id")]
+        public int? EnvironmentId { get; set; }
+
+        [JsonPropertyName("environment_description")]
+        public string? EnvironmentDescription { get; set; }
+
+        [JsonPropertyName("classification_tags")]
+        public List<string>? ClassificationTags { get; set; }
+
+        // NOTE: Present in report payloads. (Often 'hxxps' for de-weaponized display.)
+        [JsonPropertyName("submit_url")]
+        public string? SubmitUrl { get; set; }
+
+        [JsonPropertyName("submission_type")]
+        public string? SubmissionType { get; set; } // e.g., "page_url", "url", "file"
+
+        [JsonPropertyName("verdict")]
+        public string? Verdict { get; set; }
+
+        [JsonPropertyName("threat_score")]
+        public int? ThreatScore { get; set; }
+
+        // Optional, commonly seen detail collections (shape varies by job/env)
+        [JsonPropertyName("artifacts")]
+        public List<FalconXArtifact>? Artifacts { get; set; }
+
+        [JsonPropertyName("network_artifacts")]
+        public List<FalconXNetworkArtifact>? NetworkArtifacts { get; set; }
+
+        [JsonPropertyName("extracted_iocs")]
+        public List<FalconXIndicator>? ExtractedIocs { get; set; }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement>? Additional { get; set; }
+    }
+
+    public class FalconXArtifact
+    {
+        [JsonPropertyName("artifact_id")]
+        public string? ArtifactId { get; set; }
+
+        [JsonPropertyName("type")]
+        public string? Type { get; set; }  // e.g., "report_pdf", "memory_dump", etc.
+
+        [JsonPropertyName("name")]
+        public string? Name { get; set; }
+
+        [JsonPropertyName("sha256")]
+        public string? Sha256 { get; set; }
+
+        [JsonPropertyName("size")]
+        public long? Size { get; set; }
+
+        [JsonPropertyName("url")]
+        public string? Url { get; set; }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement>? Additional { get; set; }
+    }
+
+    public class FalconXNetworkArtifact
+    {
+        [JsonPropertyName("protocol")]
+        public string? Protocol { get; set; }
+
+        [JsonPropertyName("src_ip")]
+        public string? SrcIp { get; set; }
+
+        [JsonPropertyName("dst_ip")]
+        public string? DstIp { get; set; }
+
+        [JsonPropertyName("src_port")]
+        public int? SrcPort { get; set; }
+
+        [JsonPropertyName("dst_port")]
+        public int? DstPort { get; set; }
+
+        [JsonPropertyName("url")]
+        public string? Url { get; set; }
+
+        [JsonPropertyName("domain")]
+        public string? Domain { get; set; }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement>? Additional { get; set; }
+    }
+
+    public class FalconXIndicator
+    {
+        [JsonPropertyName("indicator")]
+        public string? Indicator { get; set; }  // the IOC string (domain, ip, hash, etc.)
+
+        [JsonPropertyName("type")]
+        public string? Type { get; set; }       // e.g., "domain", "ipv4", "sha256", "url"
+
+        [JsonPropertyName("labels")]
+        public List<string>? Labels { get; set; }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement>? Additional { get; set; }
+    }
+
+    // ---------- Entities: Report Summaries (/falconx/entities/report-summaries/v1) ----------
+
+    public class FalconXReportSummary
+    {
+        [JsonPropertyName("id")]
+        public string? Id { get; set; }
+
+        [JsonPropertyName("created_timestamp")]
+        public DateTimeOffset? CreatedTimestamp { get; set; }
+
+        [JsonPropertyName("verdict")]
+        public string? Verdict { get; set; }
+
+        [JsonPropertyName("sandbox")]
+        public List<FalconXReportSummarySandbox>? Sandbox { get; set; }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement>? Additional { get; set; }
+    }
+
+    public class FalconXReportSummarySandbox
+    {
+        [JsonPropertyName("environment_id")]
+        public int? EnvironmentId { get; set; }
+
+        [JsonPropertyName("environment_description")]
+        public string? EnvironmentDescription { get; set; }
+
+        [JsonPropertyName("submission_type")]
+        public string? SubmissionType { get; set; }  // e.g., "page_url"
+
+        [JsonPropertyName("submit_url")]
+        public string? SubmitUrl { get; set; }       // present for URL/page_url types
+
+        [JsonPropertyName("verdict")]
+        public string? Verdict { get; set; }
+
+        [JsonPropertyName("threat_score")]
+        public int? ThreatScore { get; set; }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement>? Additional { get; set; }
+    }
+
+    // ---------- Queries: Submissions (/falconx/queries/submissions/v1) ----------
+
+    // For /queries/submissions, resources are string IDs; you can reuse CsApiResponse<string>.
+    // If you also use an entities/submissions route in your tenant, this model is handy:
+
+    public class FalconXSubmission
+    {
+        [JsonPropertyName("id")]
+        public string? Id { get; set; }
+
+        [JsonPropertyName("created_timestamp")]
+        public DateTimeOffset? CreatedTimestamp { get; set; }
+
+        [JsonPropertyName("submission_type")]
+        public string? SubmissionType { get; set; }  // "page_url", "url", "file"
+
+        // This is the field you filter on in /queries/submissions
+        [JsonPropertyName("url")]
+        public string? Url { get; set; }
+
+        [JsonPropertyName("sha256")]
+        public string? Sha256 { get; set; }
+
+        [JsonExtensionData]
+        public Dictionary<string, JsonElement>? Additional { get; set; }
+    }
+}
