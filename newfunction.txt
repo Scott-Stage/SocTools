@@ -1,14 +1,1 @@
-using System.Text.Json;
-using CrowdStrike.FalconX.Models;
-
-// Entities → full reports
-var reportEntityJson = await http.GetStringAsync(".../falconx/entities/reports/v1?ids=...");
-var reportEntity = JsonSerializer.Deserialize<CsApiResponse<FalconXReport>>(reportEntityJson);
-
-// Queries → report IDs
-var reportIdsJson = await http.GetStringAsync(".../falconx/queries/reports/v1?filter=verdict:'suspicious'");
-var reportIds = JsonSerializer.Deserialize<CsApiResponse<string>>(reportIdsJson);
-
-// Entities → report summaries
-var summariesJson = await http.GetStringAsync(".../falconx/entities/report-summaries/v1?ids=...");
-var summaries = JsonSerializer.Deserialize<CsApiResponse<FalconXReportSummary>>(summariesJson);
+https://170.9.26.247:3000/public-dashboards/b134366d59e645e7a5913c109db3e1c7
