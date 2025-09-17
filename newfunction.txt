@@ -1,25 +1,48 @@
 Import-Module ActiveDirectory
 
-$GUID_ENROLL = [guid]'0e10c968-78fb-11d2-90d4-00c04f79dc55'
+$GUID_ENROLL     = [guid]'0e10c968-78fb-11d2-90d4-00c04f79dc55'
+$GUID_AUTOENROLL = [guid]'a05b8cc2-17bc-4802-a710-e7c15ab866a2'
 
 $cfg  = (Get-ADRootDSE).configurationNamingContext
-$base = "CN=Enrollment Services,CN=Public Key Services,CN=Services,$cfg"
+$base = "CN=Certificate Templates,CN=Public Key Services,CN=Services,$cfg"
 
-$cas = Get-ADObject -SearchBase $base -LDAPFilter '(objectClass=pKIEnrollmentService)' `
-                    -Properties cn
+$templates = Get-ADObject -SearchBase $base -LDAPFilter '(objectClass=pKICertificateTemplate)' `
+                          -Properties cn,displayName
 
-$caPerms = foreach ($ca in $cas) {
-  $acl = Get-Acl -Path ("AD:\" + $ca.DistinguishedName)
+$result = foreach ($t in $templates) {
+  $acl = Get-Acl -Path ("AD:\" + $t.DistinguishedName)
   $acl.Access | Where-Object {
       $_.AccessControlType -eq 'Allow' -and
       $_.ActiveDirectoryRights.HasFlag([System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight) -and
-      $_.ObjectType -eq $GUID_ENROLL
-  } | Select-Object @{n='CACommonName';e={$ca.cn}},
-                    @{n='Right';e={'Enroll'}},
+      ($_.ObjectType -eq $GUID_ENROLL -or $_.ObjectType -eq $GUID_AUTOENROLL)
+  } | Select-Object @{n='TemplateCN';e={$t.cn}},
+                    @{n='TemplateDisplayName';e={$t.displayName}},
+                    @{n='Right';e={ if ($_.ObjectType -eq $GUID_ENROLL){'Enroll'} else {'Autoenroll'} }},
                     @{n='Principal';e={$_.IdentityReference.Value}},
                     @{n='IsInherited';e={$_.IsInherited}}
 }
 
-$caPerms | Sort-Object CACommonName,Principal | Format-Table -AutoSize
-# Export:
-# $caPerms | Export-Csv .\CA-Enrollers.csv -NoTypeInformation
+# Add a flag to highlight broad principals on ENROLL
+$enhanced = $result | Select-Object *,
+  @{n='Flag';e={
+      if (($_.Right -eq 'Enroll') -and
+          ( $_.Principal -match '\\Domain Users$' -or
+            $_.Principal -match '(?i)Authenticated Users$' )) { 'BROAD-ENROLL' } else { '' }
+  }}
+
+# Show risky grants first (Enroll to Domain Users / Authenticated Users)
+$risky = $enhanced | Where-Object { $_.Flag -ne '' } |
+         Sort-Object TemplateCN, Principal
+
+if ($risky) {
+  Write-Host "⚠ Enroll granted to broad principals (Domain Users / Authenticated Users):" -ForegroundColor Yellow
+  $risky | Format-Table TemplateCN,TemplateDisplayName,Right,Principal,IsInherited,Flag -AutoSize
+} else {
+  Write-Host "✅ No Enroll grants to Domain Users or Authenticated Users found." -ForegroundColor Green
+}
+
+# Full listing (with the Flag column)
+Write-Host "`nAll template permissions:" -ForegroundColor Cyan
+$enhanced | Sort-Object TemplateCN,Right,Principal | Format-Table -AutoSize
+# Export if you like:
+# $enhanced | Export-Csv .\Template-Enrollers.csv -NoTypeInformation
