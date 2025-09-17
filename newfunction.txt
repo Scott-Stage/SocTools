@@ -14,7 +14,7 @@ $BroadGroupRegex = if ($IncludeEveryoneAsBroad) {
   [regex]'(?i)(^|\\)(Authenticated Users|Domain Users)$'
 }
 
-# "Regular user" account ID patterns (letter+4digits OR letter+4digits+letter)
+# "Regular user" ID patterns: letter+4digits OR letter+4digits+letter
 $UserIdRegex = [regex]'(?i)(?<![a-z0-9])([a-z][0-9]{4}[a-z]?)(?![a-z0-9])'
 
 # ---- pull certificate templates & ACLs ----
@@ -37,17 +37,22 @@ $result = foreach ($t in $templates) {
                     @{n='IsInherited';e={$_.IsInherited}}
 }
 
-# Add a flag (for the Full List block)
+# Add flags for the Full List block:
+# - BROAD-ENROLL when Enroll is granted to Domain Users / Authenticated Users (and optionally Everyone)
+# - USER-ID when principal contains letter+4digits[+letter]
 $full = $result | Select-Object *,
   @{n='Flag';e={
-      if (($_.Right -eq 'Enroll') -and $BroadGroupRegex.IsMatch($_.Principal)) { 'BROAD-ENROLL' } else { '' }
+      $flags = @()
+      if (($_.Right -eq 'Enroll') -and $BroadGroupRegex.IsMatch($_.Principal)) { $flags += 'BROAD-ENROLL' }
+      if ($UserIdRegex.IsMatch($_.Principal)) { $flags += 'USER-ID' }
+      ($flags -join '; ')
   }}
 
 # -----------------------------
 # Block 1: Broad Enroll
 # -----------------------------
 Write-Host "=== Broad Enroll (Domain Users / Authenticated Users$(if($IncludeEveryoneAsBroad){' / Everyone'}) ) ===" -ForegroundColor Yellow
-$broadEnroll = $full | Where-Object { $_.Right -eq 'Enroll' -and $_.Flag -eq 'BROAD-ENROLL' } |
+$broadEnroll = $full | Where-Object { $_.Right -eq 'Enroll' -and $_.Flag -match 'BROAD-ENROLL' } |
                Sort-Object TemplateCN, Principal
 if ($broadEnroll) {
   $broadEnroll | Format-Table TemplateCN,TemplateDisplayName,Right,Principal,IsInherited -AutoSize
@@ -61,7 +66,7 @@ if ($broadEnroll) {
 # Block 2: Regular user accounts (letter+4digits[+letter])
 # -----------------------------
 Write-Host "`n=== Regular User Accounts (principal contains letter+4digits or letter+4digits+letter) ===" -ForegroundColor Cyan
-$regularUsers = foreach ($row in $full) {
+$regularUsers = foreach ($row in $result) {
   $m = $UserIdRegex.Match($row.Principal)
   if ($m.Success) {
     [pscustomobject]@{
@@ -84,9 +89,9 @@ if ($regularUsers) {
 # $regularUsers | Export-Csv .\Block2_RegularUsers.csv -NoTypeInformation
 
 # -----------------------------
-# Block 3: Full list (with Flag)
+# Block 3: Full list (with Flags)
 # -----------------------------
-Write-Host "`n=== Full List (with Flag column highlighting broad Enroll) ===" -ForegroundColor White
+Write-Host "`n=== Full List (with Flags: BROAD-ENROLL / USER-ID) ===" -ForegroundColor White
 $full | Sort-Object TemplateCN, Right, Principal | Format-Table -AutoSize
 # Export if desired:
 # $full | Export-Csv .\Block3_FullList.csv -NoTypeInformation
