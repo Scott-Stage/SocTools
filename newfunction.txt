@@ -22,27 +22,24 @@ $result = foreach ($t in $templates) {
                     @{n='IsInherited';e={$_.IsInherited}}
 }
 
-# Add a flag to highlight broad principals on ENROLL
-$enhanced = $result | Select-Object *,
-  @{n='Flag';e={
-      if (($_.Right -eq 'Enroll') -and
-          ( $_.Principal -match '\\Domain Users$' -or
-            $_.Principal -match '(?i)Authenticated Users$' )) { 'BROAD-ENROLL' } else { '' }
-  }}
+# Keep only principals that contain: letter + 4 digits (e.g., u1234)
+# Regex is case-insensitive and searches anywhere in the string.
+$pattern = '(?i)\b([a-z][0-9]{4})\b'
 
-# Show risky grants first (Enroll to Domain Users / Authenticated Users)
-$risky = $enhanced | Where-Object { $_.Flag -ne '' } |
-         Sort-Object TemplateCN, Principal
-
-if ($risky) {
-  Write-Host "⚠ Enroll granted to broad principals (Domain Users / Authenticated Users):" -ForegroundColor Yellow
-  $risky | Format-Table TemplateCN,TemplateDisplayName,Right,Principal,IsInherited,Flag -AutoSize
-} else {
-  Write-Host "✅ No Enroll grants to Domain Users or Authenticated Users found." -ForegroundColor Green
+$filtered = foreach ($row in $result) {
+  if ($row.Principal -match $pattern) {
+    $match = $Matches[1]
+    [pscustomobject]@{
+      TemplateCN           = $row.TemplateCN
+      TemplateDisplayName  = $row.TemplateDisplayName
+      Right                = $row.Right
+      Principal            = $row.Principal
+      IsInherited          = $row.IsInherited
+      MatchedId            = $match
+    }
+  }
 }
 
-# Full listing (with the Flag column)
-Write-Host "`nAll template permissions:" -ForegroundColor Cyan
-$enhanced | Sort-Object TemplateCN,Right,Principal | Format-Table -AutoSize
+$filtered | Sort-Object TemplateCN, Right, Principal | Format-Table -AutoSize
 # Export if you like:
-# $enhanced | Export-Csv .\Template-Enrollers.csv -NoTypeInformation
+# $filtered | Export-Csv .\Template-Enrollers_Matched.csv -NoTypeInformation
