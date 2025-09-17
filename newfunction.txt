@@ -1,8 +1,23 @@
 Import-Module ActiveDirectory
 
+# ---- constants / toggles ----
 $GUID_ENROLL     = [guid]'0e10c968-78fb-11d2-90d4-00c04f79dc55'
 $GUID_AUTOENROLL = [guid]'a05b8cc2-17bc-4802-a710-e7c15ab866a2'
 
+# Include 'Everyone' as a "broad" principal? Set to $true to include.
+$IncludeEveryoneAsBroad = $false
+
+# Broad principals pattern (end of string or after a backslash)
+$BroadGroupRegex = if ($IncludeEveryoneAsBroad) {
+  [regex]'(?i)(^|\\)(Authenticated Users|Domain Users|Everyone)$'
+} else {
+  [regex]'(?i)(^|\\)(Authenticated Users|Domain Users)$'
+}
+
+# "Regular user" account ID patterns (letter+4digits OR letter+4digits+letter)
+$UserIdRegex = [regex]'(?i)(?<![a-z0-9])([a-z][0-9]{4}[a-z]?)(?![a-z0-9])'
+
+# ---- pull certificate templates & ACLs ----
 $cfg  = (Get-ADRootDSE).configurationNamingContext
 $base = "CN=Certificate Templates,CN=Public Key Services,CN=Services,$cfg"
 
@@ -22,12 +37,32 @@ $result = foreach ($t in $templates) {
                     @{n='IsInherited';e={$_.IsInherited}}
 }
 
-# Match either: letter+4digits OR letter+4digits+letter (case-insensitive),
-# while avoiding being part of a longer alphanumeric token.
-$regex = [regex]'(?i)(?<![a-z0-9])([a-z][0-9]{4}[a-z]?)(?![a-z0-9])'
+# Add a flag (for the Full List block)
+$full = $result | Select-Object *,
+  @{n='Flag';e={
+      if (($_.Right -eq 'Enroll') -and $BroadGroupRegex.IsMatch($_.Principal)) { 'BROAD-ENROLL' } else { '' }
+  }}
 
-$filtered = foreach ($row in $result) {
-  $m = $regex.Match($row.Principal)
+# -----------------------------
+# Block 1: Broad Enroll
+# -----------------------------
+Write-Host "=== Broad Enroll (Domain Users / Authenticated Users$(if($IncludeEveryoneAsBroad){' / Everyone'}) ) ===" -ForegroundColor Yellow
+$broadEnroll = $full | Where-Object { $_.Right -eq 'Enroll' -and $_.Flag -eq 'BROAD-ENROLL' } |
+               Sort-Object TemplateCN, Principal
+if ($broadEnroll) {
+  $broadEnroll | Format-Table TemplateCN,TemplateDisplayName,Right,Principal,IsInherited -AutoSize
+} else {
+  Write-Host "No broad Enroll grants found." -ForegroundColor Green
+}
+# Export if desired:
+# $broadEnroll | Export-Csv .\Block1_BroadEnroll.csv -NoTypeInformation
+
+# -----------------------------
+# Block 2: Regular user accounts (letter+4digits[+letter])
+# -----------------------------
+Write-Host "`n=== Regular User Accounts (principal contains letter+4digits or letter+4digits+letter) ===" -ForegroundColor Cyan
+$regularUsers = foreach ($row in $full) {
+  $m = $UserIdRegex.Match($row.Principal)
   if ($m.Success) {
     [pscustomobject]@{
       TemplateCN          = $row.TemplateCN
@@ -39,7 +74,19 @@ $filtered = foreach ($row in $result) {
     }
   }
 }
-
-$filtered | Sort-Object TemplateCN, Right, Principal | Format-Table -AutoSize
+$regularUsers = $regularUsers | Sort-Object TemplateCN, Right, Principal
+if ($regularUsers) {
+  $regularUsers | Format-Table TemplateCN,TemplateDisplayName,Right,Principal,MatchedId,IsInherited -AutoSize
+} else {
+  Write-Host "No principals matching the user-ID pattern were found." -ForegroundColor DarkGray
+}
 # Export if desired:
-# $filtered | Export-Csv .\Template-Enrollers_Matched.csv -NoTypeInformation
+# $regularUsers | Export-Csv .\Block2_RegularUsers.csv -NoTypeInformation
+
+# -----------------------------
+# Block 3: Full list (with Flag)
+# -----------------------------
+Write-Host "`n=== Full List (with Flag column highlighting broad Enroll) ===" -ForegroundColor White
+$full | Sort-Object TemplateCN, Right, Principal | Format-Table -AutoSize
+# Export if desired:
+# $full | Export-Csv .\Block3_FullList.csv -NoTypeInformation
