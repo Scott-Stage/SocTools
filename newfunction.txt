@@ -22,24 +22,24 @@ $result = foreach ($t in $templates) {
                     @{n='IsInherited';e={$_.IsInherited}}
 }
 
-# Keep only principals that contain: letter + 4 digits (e.g., u1234)
-# Regex is case-insensitive and searches anywhere in the string.
-$pattern = '(?i)\b([a-z][0-9]{4})\b'
+# Match either: letter+4digits OR letter+4digits+letter (case-insensitive),
+# while avoiding being part of a longer alphanumeric token.
+$regex = [regex]'(?i)(?<![a-z0-9])([a-z][0-9]{4}[a-z]?)(?![a-z0-9])'
 
 $filtered = foreach ($row in $result) {
-  if ($row.Principal -match $pattern) {
-    $match = $Matches[1]
+  $m = $regex.Match($row.Principal)
+  if ($m.Success) {
     [pscustomobject]@{
-      TemplateCN           = $row.TemplateCN
-      TemplateDisplayName  = $row.TemplateDisplayName
-      Right                = $row.Right
-      Principal            = $row.Principal
-      IsInherited          = $row.IsInherited
-      MatchedId            = $match
+      TemplateCN          = $row.TemplateCN
+      TemplateDisplayName = $row.TemplateDisplayName
+      Right               = $row.Right
+      Principal           = $row.Principal
+      IsInherited         = $row.IsInherited
+      MatchedId           = $m.Groups[1].Value
     }
   }
 }
 
 $filtered | Sort-Object TemplateCN, Right, Principal | Format-Table -AutoSize
-# Export if you like:
+# Export if desired:
 # $filtered | Export-Csv .\Template-Enrollers_Matched.csv -NoTypeInformation
