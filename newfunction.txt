@@ -1,31 +1,15 @@
+// Program.cs
 var builder = WebApplication.CreateBuilder(args);
 
-// (Optional) your own SQLite secret provider – or hard-wire for now
-builder.Services.AddSingleton<ISecretProvider>(_ => new SqliteSecretProvider("Data Source=./app.db"));
+builder.Services.AddHttpContextAccessor();   // <-- REQUIRED
 
-builder.Services.AddHttpContextAccessor();
-builder.Services.AddDistributedMemoryCache();
-builder.Services.AddSession(); // used to store state/code_verifier/tokens per user session
-
-// The ONLY Graph-specific thing here: a named HttpClient.
-// No auth handlers, no OIDC middleware.
+// if you use a delegating handler or services that need HttpContext:
+builder.Services.AddTransient<TokenFromApiAuthHandler>();
 builder.Services.AddHttpClient("GraphApi", http =>
 {
     http.BaseAddress = new Uri("https://graph.microsoft.com/v1.0/");
     http.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-});
+})
+.AddHttpMessageHandler<TokenFromApiAuthHandler>();
 
 builder.Services.AddScoped<MicrosoftGraphApiService>();
-
-builder.Services.AddRazorComponents().AddInteractiveServerComponents();
-
-var app = builder.Build();
-app.UseHttpsRedirection();
-app.UseStaticFiles();
-app.UseRouting();
-app.UseSession();            // required for the service’s token/state storage
-app.UseAuthorization();
-
-app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
-
-app.Run();
