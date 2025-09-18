@@ -1,24 +1,20 @@
-using Microsoft.AspNetCore.Authentication.OpenIdConnect;
-using Microsoft.Identity.Web;
+@page "/me"
+@using Microsoft.Graph
+@attribute [Microsoft.Identity.Web.UI.AuthorizeForScopes(Scopes = new[] {"User.Read"})]
+@inject GraphServiceClient Graph
 
-builder.Services
-    .AddAuthentication(OpenIdConnectDefaults.AuthenticationScheme)
-    .AddMicrosoftIdentityWebApp(options =>
-    {
-        options.Instance     = "https://login.microsoftonline.com/";
-        options.TenantId     = tenantIdFromSqlite;
-        options.ClientId     = clientIdFromSqlite;
-        options.ClientSecret = clientSecretFromSqlite;
-        options.CallbackPath = "/signin-oidc";
-        options.UsePkce      = true;
+<h3>Me</h3>
 
-        // request delegated Graph scopes
-        options.Scope.Add("openid");
-        options.Scope.Add("profile");
-        options.Scope.Add("offline_access");
-        options.Scope.Add("https://graph.microsoft.com/User.Read");
-        options.Scope.Add("https://graph.microsoft.com/eDiscovery.Read.All");
-    })
-    .EnableTokenAcquisitionToCallDownstreamApi()
-    .AddMicrosoftGraph(scopes: new[] { "User.Read", "eDiscovery.Read.All" })
-    .AddInMemoryTokenCaches();
+@if (_me is null) { <p>Loading…</p> }
+else {
+  <p>@_me.DisplayName (@_me.UserPrincipalName)</p>
+}
+
+@code {
+  private User? _me;
+  protected override async Task OnInitializedAsync() {
+      _me = await Graph.Me.GetAsync(req => {
+          req.QueryParameters.Select = new[] { "id","displayName","userPrincipalName","mail" };
+      });
+  }
+}
