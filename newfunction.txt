@@ -1,15 +1,27 @@
-// Program.cs
-var builder = WebApplication.CreateBuilder(args);
+Start the auth in an endpoint that sets session, then redirects to AAD:
 
-builder.Services.AddHttpContextAccessor();   // <-- REQUIRED
-
-// if you use a delegating handler or services that need HttpContext:
-builder.Services.AddTransient<TokenFromApiAuthHandler>();
-builder.Services.AddHttpClient("GraphApi", http =>
+// Start the flow: sets state/code_verifier in session, then redirects
+app.MapGet("/graph/start", (HttpContext ctx, MicrosoftGraphApiService svc, string? username) =>
 {
-    http.BaseAddress = new Uri("https://graph.microsoft.com/v1.0/");
-    http.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-})
-.AddHttpMessageHandler<TokenFromApiAuthHandler>();
+    var scopes = new[]{
+        "openid","profile","offline_access",
+        "https://graph.microsoft.com/User.Read",
+        "https://graph.microsoft.com/eDiscovery.Read.All"
+    };
+    var authUrl = svc.BuildAuthorizeUrl(username, scopes);  // writes to Session here
+    return Results.Redirect(authUrl);
+});
 
-builder.Services.AddScoped<MicrosoftGraphApiService>();
+
+Handle the callback in another HTTP endpoint (exchange code → tokens → store in session), then redirect to your page:
+
+app.MapGet("/graph/callback", async (HttpContext ctx, MicrosoftGraphApiService svc) =>
+{
+    var code  = ctx.Request.Query["code"].ToString();
+    var state = ctx.Request.Query["state"].ToString();
+    if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
+        return Results.BadRequest("Missing code/state");
+
+    await svc.CompleteAuthorizationAsync(code, state);  // writes tokens to Session
+    return Results.Redirect("/graph/demo");             // or wherever you want to land
+});
