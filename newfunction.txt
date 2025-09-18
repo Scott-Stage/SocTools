@@ -1,20 +1,11 @@
-@page "/me"
-@using Microsoft.Graph
-@attribute [Microsoft.Identity.Web.UI.AuthorizeForScopes(Scopes = new[] {"User.Read"})]
-@inject GraphServiceClient Graph
+using Microsoft.Graph;            // GraphServiceClient
+using Microsoft.Graph.Models;     // User model (v5)
 
-<h3>Me</h3>
+var me   = await graphClient.Me.GetAsync();
+var user = await graphClient.Users[userIdOrUpn].GetAsync();
 
-@if (_me is null) { <p>Loading…</p> }
-else {
-  <p>@_me.DisplayName (@_me.UserPrincipalName)</p>
-}
-
-@code {
-  private User? _me;
-  protected override async Task OnInitializedAsync() {
-      _me = await Graph.Me.GetAsync(req => {
-          req.QueryParameters.Select = new[] { "id","displayName","userPrincipalName","mail" };
-      });
-  }
-}
+var users = await graphClient.Users.GetAsync(cfg =>
+{
+    cfg.QueryParameters.Select = new[] { "id","displayName","userPrincipalName","mail" };
+    cfg.QueryParameters.Top = 25;
+});
