@@ -1,13 +1,122 @@
-@inject NavigationManager Nav
+Do these 5 changes
+1) Commit session before you redirect to Microsoft
 
-<input @bind="username" placeholder="user@contoso.com" />
-<button @onclick="Connect">Connect</button>
+Right after you build the authorize URL, commit the session in the /graph/start endpoint:
 
-@code {
-  private string? username;
-  private void Connect()
-  {
-      var u = string.IsNullOrWhiteSpace(username) ? "" : $"?username={Uri.EscapeDataString(username)}";
-      Nav.NavigateTo($"/graph/start{u}", forceLoad: true); // normal HTTP -> can use Session
-  }
-}
+app.MapGet("/graph/start", async (HttpContext ctx, MicrosoftGraphApiService svc, string? username) =>
+{
+    var scopes = new[]{
+        "openid","profile","offline_access",
+        "https://graph.microsoft.com/User.Read",
+        "https://graph.microsoft.com/eDiscovery.Read.All"
+    };
+    var authUrl = svc.BuildAuthorizeUrl(username, scopes);  // sets state + code_verifier
+
+    await ctx.Session.CommitAsync();   // <-- ensure .AspNetCore.Session cookie is written
+    return Results.Redirect(authUrl);
+});
+
+2) Use Base64URL for state (no + or /)
+
+In your service, replace the state generator with URL-safe output:
+
+// old
+// var state = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+
+// new (reuse your Base64Url helper)
+var state = Base64Url(RandomNumberGenerator.GetBytes(32));
+
+3) Allow parallel auth starts (don’t overwrite)
+
+Store the code_verifier keyed by state so a second “Start” won’t clobber the first.
+
+// keys
+private const string SessStateIndex = "GraphAuth.StateIndex"; // JSON array of active states
+private static string CvKey(string state) => $"GraphAuth.CodeVerifier.{state}";
+
+// when starting:
+var listJson = _http.HttpContext!.Session.GetString(SessStateIndex);
+var list = string.IsNullOrEmpty(listJson) ? new List<string>() :
+           System.Text.Json.JsonSerializer.Deserialize<List<string>>(listJson)!;
+
+list.Add(state);
+_http.HttpContext!.Session.SetString(SessStateIndex, System.Text.Json.JsonSerializer.Serialize(list));
+_http.HttpContext!.Session.SetString(CvKey(state), codeVerifier);
+
+// on callback:
+var listJson = _http.HttpContext!.Session.GetString(SessStateIndex);
+var list = string.IsNullOrEmpty(listJson) ? new List<string>() :
+           System.Text.Json.JsonSerializer.Deserialize<List<string>>(listJson)!;
+
+if (!list.Contains(state)) throw new InvalidOperationException("Invalid state");
+
+var codeVerifier = _http.HttpContext!.Session.GetString(CvKey(state))
+                   ?? throw new InvalidOperationException("Missing code_verifier");
+
+// consume one-time
+list.Remove(state);
+_http.HttpContext!.Session.SetString(SessStateIndex, System.Text.Json.JsonSerializer.Serialize(list));
+_http.HttpContext!.Session.Remove(CvKey(state));
+
+
+(If you only ever start one flow at a time, you can skip the index and keep a single key—but this makes it robust.)
+
+4) Double-check session middleware order
+
+In Program.cs:
+
+builder.Services.AddDistributedMemoryCache();
+builder.Services.AddSession(o =>
+{
+    o.IdleTimeout = TimeSpan.FromHours(1);
+    o.Cookie.HttpOnly = true;
+    o.Cookie.SameSite = SameSiteMode.Lax;      // top-level GET to /graph/callback sends the cookie
+    o.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+});
+builder.Services.AddHttpContextAccessor();
+
+var app = builder.Build();
+app.UseHttpsRedirection();
+app.UseStaticFiles();
+app.UseRouting();
+app.UseSession();             // <-- must be BEFORE endpoints
+app.UseAuthorization();
+
+app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
+
+5) Keep the start and callback on the same origin
+
+Use the exact same scheme/host/port for both endpoints as the app that set the session cookie. If you’re behind a reverse proxy, set forwarded headers so Request.Scheme is correct and your callback URL matches the registered redirect.
+
+Quick diagnostics (2-minute check)
+
+Open DevTools → Network. Hit /graph/start.
+
+Response must set .AspNetCore.Session cookie.
+
+After Azure redirects back to /graph/callback:
+
+Request must send that cookie.
+
+If not, it’s a SameSite/scheme/host/port mismatch.
+
+Also log what you have:
+
+// right before throwing
+Console.WriteLine($"ExpectedState={expectedState ?? "<null>"}");
+Console.WriteLine($"ActualState={state ?? "<null>"}");
+Console.WriteLine($"SessId={_http.HttpContext!.Session.Id}");
+
+
+If expectedState is null, session wasn’t found on callback. If both exist but differ, you likely started a second flow (Step 3 fixes that).
+
+Optional: use a correlation cookie instead of session
+
+If you prefer to avoid session for state, set a temporary cookie keyed by state:
+
+var cookieName = $"GraphAuth.State.{state}";
+_http.HttpContext!.Response.Cookies.Append(cookieName, "1",
+    new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax, Expires = DateTimeOffset.UtcNow.AddMinutes(10) });
+
+
+On callback, require that cookie to exist and then delete it. (This is exactly how the built-in OIDC handler does correlation.)
