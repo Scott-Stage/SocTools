@@ -1,122 +1,162 @@
-Do these 5 changes
-1) Commit session before you redirect to Microsoft
+Nice—since you’re doing the auth flow yourself, the easiest way to “know it worked” is to (a) check that you **have a live access token** in session and (b) optionally **decode it** to see audience/scopes/expiry, then (c) make a tiny **/me** call as a runtime proof.
 
-Right after you build the authorize URL, commit the session in the /graph/start endpoint:
+Below are drop-in additions to your `MicrosoftGraphApiService.cs` plus a tiny Razor snippet you can use to verify.
 
-app.MapGet("/graph/start", async (HttpContext ctx, MicrosoftGraphApiService svc, string? username) =>
+---
+
+## 1) Add quick status helpers to `MicrosoftGraphApiService.cs`
+
+```csharp
+using System.IdentityModel.Tokens.Jwt; // add package: System.IdentityModel.Tokens.Jwt
+using System.Linq;
+
+// Snapshot DTO for easy display/diagnostics
+public sealed class TokenSnapshot
 {
-    var scopes = new[]{
-        "openid","profile","offline_access",
-        "https://graph.microsoft.com/User.Read",
-        "https://graph.microsoft.com/eDiscovery.Read.All"
+    public bool            IsConnected   { get; init; }
+    public DateTimeOffset? ExpiresUtc    { get; init; }
+    public string?         Audience      { get; init; }
+    public string?         TenantId      { get; init; }
+    public string?         Username      { get; init; }
+    public string[]        Scopes        { get; init; } = Array.Empty<string>();
+    public string[]        Roles         { get; init; } = Array.Empty<string>();
+    public string?         Raw           { get; init; } // show only in dev
+}
+
+/// <summary>Returns true if a valid (or refreshable) access token is present.</summary>
+public async Task<bool> IsConnectedAsync(CancellationToken ct = default)
+{
+    try { _ = await GetValidAccessTokenAsync(ct); return true; }
+    catch { return false; }
+}
+
+/// <summary>Decode the access token (without signature validation) for diagnostics.</summary>
+public TokenSnapshot? GetAccessTokenSnapshot()
+{
+    var token = _http.HttpContext!.Session.GetString(SessAccessToken);
+    if (string.IsNullOrEmpty(token)) return null;
+
+    var handler = new JwtSecurityTokenHandler();
+    var jwt = handler.ReadJwtToken(token);
+
+    var scopes = jwt.Claims.Where(c => c.Type == "scp")
+                           .SelectMany(c => c.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                           .ToArray();
+    var roles  = jwt.Claims.Where(c => c.Type == "roles").Select(c => c.Value).ToArray();
+
+    return new TokenSnapshot
+    {
+        IsConnected = true,
+        ExpiresUtc  = DateTime.SpecifyKind(jwt.ValidTo, DateTimeKind.Utc),
+        Audience    = jwt.Audiences.FirstOrDefault(),
+        TenantId    = jwt.Claims.FirstOrDefault(c => c.Type == "tid")?.Value,
+        Username    = jwt.Claims.FirstOrDefault(c => c.Type == "preferred_username" || c.Type == "upn")?.Value,
+        Scopes      = scopes,
+        Roles       = roles,
+#if DEBUG
+        Raw         = token
+#endif
     };
-    var authUrl = svc.BuildAuthorizeUrl(username, scopes);  // sets state + code_verifier
+}
+```
 
-    await ctx.Session.CommitAsync();   // <-- ensure .AspNetCore.Session cookie is written
-    return Results.Redirect(authUrl);
-});
+> These do **not** validate the JWT signature—that’s fine for a quick “did we get a token?” check. For production validation, use `TokenValidationParameters` with issuer signing keys, but you usually don’t need that for this purpose.
 
-2) Use Base64URL for state (no + or /)
+---
 
-In your service, replace the state generator with URL-safe output:
+## 2) Quick Razor page to verify everything
 
-// old
-// var state = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+```razor
+@page "/graph/status"
+@inject MicrosoftGraphApiService GraphSvc
 
-// new (reuse your Base64Url helper)
-var state = Base64Url(RandomNumberGenerator.GetBytes(32));
+<h3>Graph Auth Status</h3>
 
-3) Allow parallel auth starts (don’t overwrite)
-
-Store the code_verifier keyed by state so a second “Start” won’t clobber the first.
-
-// keys
-private const string SessStateIndex = "GraphAuth.StateIndex"; // JSON array of active states
-private static string CvKey(string state) => $"GraphAuth.CodeVerifier.{state}";
-
-// when starting:
-var listJson = _http.HttpContext!.Session.GetString(SessStateIndex);
-var list = string.IsNullOrEmpty(listJson) ? new List<string>() :
-           System.Text.Json.JsonSerializer.Deserialize<List<string>>(listJson)!;
-
-list.Add(state);
-_http.HttpContext!.Session.SetString(SessStateIndex, System.Text.Json.JsonSerializer.Serialize(list));
-_http.HttpContext!.Session.SetString(CvKey(state), codeVerifier);
-
-// on callback:
-var listJson = _http.HttpContext!.Session.GetString(SessStateIndex);
-var list = string.IsNullOrEmpty(listJson) ? new List<string>() :
-           System.Text.Json.JsonSerializer.Deserialize<List<string>>(listJson)!;
-
-if (!list.Contains(state)) throw new InvalidOperationException("Invalid state");
-
-var codeVerifier = _http.HttpContext!.Session.GetString(CvKey(state))
-                   ?? throw new InvalidOperationException("Missing code_verifier");
-
-// consume one-time
-list.Remove(state);
-_http.HttpContext!.Session.SetString(SessStateIndex, System.Text.Json.JsonSerializer.Serialize(list));
-_http.HttpContext!.Session.Remove(CvKey(state));
-
-
-(If you only ever start one flow at a time, you can skip the index and keep a single key—but this makes it robust.)
-
-4) Double-check session middleware order
-
-In Program.cs:
-
-builder.Services.AddDistributedMemoryCache();
-builder.Services.AddSession(o =>
+@if (_snap is null)
 {
-    o.IdleTimeout = TimeSpan.FromHours(1);
-    o.Cookie.HttpOnly = true;
-    o.Cookie.SameSite = SameSiteMode.Lax;      // top-level GET to /graph/callback sends the cookie
-    o.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+    <p>Not connected.</p>
+    <p><a href="/graph/start">Connect now</a></p>
+}
+else
+{
+    <ul>
+        <li><b>User</b>: @_snap.Username</li>
+        <li><b>Audience</b>: @_snap.Audience</li>
+        <li><b>Tenant</b>: @_snap.TenantId</li>
+        <li><b>Expires (UTC)</b>: @_snap.ExpiresUtc</li>
+        <li><b>Scopes</b>: @string.Join(", ", _snap.Scopes)</li>
+        <li><b>Roles</b>: @string.Join(", ", _snap.Roles)</li>
+    </ul>
+    <button class="btn btn-secondary" @onclick="CallMe">Call /me</button>
+    <pre>@_result</pre>
+#if DEBUG
+    <details><summary>Raw access token (dev)</summary><code>@_snap.Raw</code></details>
+#endif
+}
+
+@code {
+    private TokenSnapshot? _snap;
+    private string _result = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _snap = await GraphSvc.IsConnectedAsync()
+            ? GraphSvc.GetAccessTokenSnapshot()
+            : null;
+    }
+
+    private async Task CallMe()
+    {
+        try {
+            var me = await GraphSvc.GetMeAsync();
+            _result = me?.ToString() ?? "No /me payload";
+        } catch (Exception ex) {
+            _result = ex.Message;
+        }
+    }
+}
+```
+
+**What to look for:**
+
+* `Audience` should be `https://graph.microsoft.com`.
+* `Scopes` should include `User.Read` and (when requested) `eDiscovery.Read.All`.
+* `Expires (UTC)` should be in the future.
+* Clicking **Call /me** should return a JSON object with your account’s properties.
+
+---
+
+## 3) If it still feels ambiguous, add a simple health endpoint
+
+(Only if you want a non-UI check.)
+
+```csharp
+// Program.cs (optional)
+app.MapGet("/graph/health", async (MicrosoftGraphApiService svc) =>
+{
+    var ok = await svc.IsConnectedAsync();
+    var snap = ok ? svc.GetAccessTokenSnapshot() : null;
+    return Results.Json(new {
+        connected = ok,
+        audience = snap?.Audience,
+        expiresUtc = snap?.ExpiresUtc,
+        scopes = snap?.Scopes
+    });
 });
-builder.Services.AddHttpContextAccessor();
+```
 
-var app = builder.Build();
-app.UseHttpsRedirection();
-app.UseStaticFiles();
-app.UseRouting();
-app.UseSession();             // <-- must be BEFORE endpoints
-app.UseAuthorization();
+---
 
-app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
+## 4) Common reasons you’d “complete auth” but have no token
 
-5) Keep the start and callback on the same origin
+* You exchanged the `code` successfully but didn’t **persist** `access_token` in session (double-check the session set and that `UseSession()` is before routing).
+* The token request returned **success for ID token only** (make sure you request **API scopes**—e.g., `User.Read eDiscovery.Read.All`—not just `openid profile`).
+* You’re checking the token later but **reading a different session** (host/port mismatch or SameSite cookie not sent back). The `/graph/status` page will make this obvious.
 
-Use the exact same scheme/host/port for both endpoints as the app that set the session cookie. If you’re behind a reverse proxy, set forwarded headers so Request.Scheme is correct and your callback URL matches the registered redirect.
+---
 
-Quick diagnostics (2-minute check)
+With these helpers, you’ll know in one glance:
 
-Open DevTools → Network. Hit /graph/start.
-
-Response must set .AspNetCore.Session cookie.
-
-After Azure redirects back to /graph/callback:
-
-Request must send that cookie.
-
-If not, it’s a SameSite/scheme/host/port mismatch.
-
-Also log what you have:
-
-// right before throwing
-Console.WriteLine($"ExpectedState={expectedState ?? "<null>"}");
-Console.WriteLine($"ActualState={state ?? "<null>"}");
-Console.WriteLine($"SessId={_http.HttpContext!.Session.Id}");
-
-
-If expectedState is null, session wasn’t found on callback. If both exist but differ, you likely started a second flow (Step 3 fixes that).
-
-Optional: use a correlation cookie instead of session
-
-If you prefer to avoid session for state, set a temporary cookie keyed by state:
-
-var cookieName = $"GraphAuth.State.{state}";
-_http.HttpContext!.Response.Cookies.Append(cookieName, "1",
-    new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax, Expires = DateTimeOffset.UtcNow.AddMinutes(10) });
-
-
-On callback, require that cookie to exist and then delete it. (This is exactly how the built-in OIDC handler does correlation.)
+* Are we connected?
+* What’s in the token (audience, scopes, expiry)?
+* Does a real Graph call work?
