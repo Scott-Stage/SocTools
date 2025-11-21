@@ -1,5 +1,185 @@
-builder.Services.AddHttpClient("GraphApi", http =>
+using System;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Collections.Generic;
+
+#nullable enable
+
+// =======================
+// Generic Wrapper for Tenable.SC Responses
+// Usage: JsonSerializer.Deserialize<TenableScResponse<TenableAnalysisResult>>(json);
+// =======================
+public sealed class TenableScResponse<T>
 {
-    http.BaseAddress = new Uri("https://graph.microsoft.com/v1.0/"); // <-- note the trailing slash
-    http.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-});
+    [JsonPropertyName("type")]         public string? Type { get; set; }
+    [JsonPropertyName("response")]     public T? Response { get; set; }
+    [JsonPropertyName("error_code")]   public int? ErrorCode { get; set; }
+    [JsonPropertyName("error_msg")]    public string? ErrorMsg { get; set; }
+    [JsonPropertyName("warnings")]     public List<JsonElement>? Warnings { get; set; }
+    [JsonPropertyName("timestamp")]    public string? Timestamp { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+// =======================
+// POST /rest/analysis
+// (Represents a single row of vulnerability data)
+// =======================
+public sealed class TenableVulnerability
+{
+    [JsonPropertyName("pluginID")]     public string? PluginId { get; set; }
+    [JsonPropertyName("severity")]     public TenableSeverity? Severity { get; set; }
+    [JsonPropertyName("ip")]           public string? IpAddress { get; set; }
+    [JsonPropertyName("uuid")]         public string? Uuid { get; set; }
+    [JsonPropertyName("port")]         public string? Port { get; set; }
+    [JsonPropertyName("protocol")]     public string? Protocol { get; set; }
+    [JsonPropertyName("dnsName")]      public string? DnsName { get; set; }
+    [JsonPropertyName("macAddress")]   public string? MacAddress { get; set; }
+    
+    // Plugin Details
+    [JsonPropertyName("pluginName")]   public string? PluginName { get; set; }
+    [JsonPropertyName("description")]  public string? Description { get; set; }
+    [JsonPropertyName("synopsis")]     public string? Synopsis { get; set; }
+    [JsonPropertyName("solution")]     public string? Solution { get; set; }
+    [JsonPropertyName("seeAlso")]      public string? SeeAlso { get; set; }
+    [JsonPropertyName("version")]      public string? Version { get; set; }
+    
+    // Temporal Data (Unix Timestamps as strings)
+    [JsonPropertyName("firstSeen")]    public string? FirstSeen { get; set; }
+    [JsonPropertyName("lastSeen")]     public string? LastSeen { get; set; }
+    
+    // Context
+    [JsonPropertyName("repository")]   public TenableEntityRef? Repository { get; set; }
+    [JsonPropertyName("pluginFamily")] public TenableEntityRef? PluginFamily { get; set; }
+
+    // Risk Metrics
+    [JsonPropertyName("baseScore")]    public string? BaseScore { get; set; }
+    [JsonPropertyName("temporalScore")]public string? TemporalScore { get; set; }
+    [JsonPropertyName("cvssVector")]   public string? CvssVector { get; set; }
+    [JsonPropertyName("exploitAvailable")] public string? ExploitAvailable { get; set; } // "yes" or "no"
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+// =======================
+// GET /rest/scan/{id}
+// =======================
+public sealed class TenableScan
+{
+    [JsonPropertyName("id")]           public string? Id { get; set; }
+    [JsonPropertyName("name")]         public string? Name { get; set; }
+    [JsonPropertyName("description")]  public string? Description { get; set; }
+    [JsonPropertyName("status")]       public string? Status { get; set; }
+    
+    [JsonPropertyName("createdTime")]  public string? CreatedTime { get; set; }
+    [JsonPropertyName("modifiedTime")] public string? ModifiedTime { get; set; }
+    
+    [JsonPropertyName("owner")]        public TenableUserRef? Owner { get; set; }
+    [JsonPropertyName("group")]        public TenableEntityRef? Group { get; set; }
+    
+    [JsonPropertyName("schedule")]     public TenableSchedule? Schedule { get; set; }
+    [JsonPropertyName("ipList")]       public string? IpList { get; set; }
+    
+    // Scan Policy / Zone
+    [JsonPropertyName("policy")]       public TenableEntityRef? Policy { get; set; }
+    [JsonPropertyName("zone")]         public TenableEntityRef? Zone { get; set; }
+    [JsonPropertyName("repository")]   public TenableEntityRef? Repository { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+
+// =======================
+// GET /rest/agentScan
+// Usage: JsonSerializer.Deserialize<TenableScResponse<TenableScanListResult<TenableAgentScan>>>(json);
+// =======================
+
+/// <summary>
+/// Represents the specific structure returned by Scan and AgentScan list endpoints,
+/// which separates results into "usable" and "manageable" lists.
+/// </summary>
+/// <typeparam name="T">The type of scan (e.g. TenableAgentScan or TenableScan)</typeparam>
+public sealed class TenableScanListResult<T>
+{
+    [JsonPropertyName("usable")]       public List<T>? Usable { get; set; }
+    [JsonPropertyName("manageable")]   public List<T>? Manageable { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class TenableAgentScan
+{
+    [JsonPropertyName("id")]           public string? Id { get; set; }
+    [JsonPropertyName("name")]         public string? Name { get; set; }
+    [JsonPropertyName("description")]  public string? Description { get; set; }
+    [JsonPropertyName("status")]       public string? Status { get; set; }
+    
+    // -------------------------------------------------
+    // Agent Specific Fields
+    // -------------------------------------------------
+    [JsonPropertyName("nessusManager")] public TenableEntityRef? NessusManager { get; set; }
+    [JsonPropertyName("agentGroups")]   public List<TenableEntityRef>? AgentGroups { get; set; }
+    [JsonPropertyName("scanWindow")]    public string? ScanWindow { get; set; } // e.g., "3600" (seconds) or "1 hour"
+    
+    // Triggered scan settings
+    [JsonPropertyName("triggeredScanInterval")] public string? TriggeredScanInterval { get; set; }
+    [JsonPropertyName("triggeredScanFilename")] public string? TriggeredScanFilename { get; set; }
+
+    // -------------------------------------------------
+    // Common Scan Fields
+    // -------------------------------------------------
+    [JsonPropertyName("createdTime")]   public string? CreatedTime { get; set; }
+    [JsonPropertyName("modifiedTime")]  public string? ModifiedTime { get; set; }
+    
+    [JsonPropertyName("owner")]         public TenableUserRef? Owner { get; set; }
+    [JsonPropertyName("creator")]       public TenableUserRef? Creator { get; set; }
+    [JsonPropertyName("ownerGroup")]    public TenableEntityRef? OwnerGroup { get; set; }
+    
+    [JsonPropertyName("repository")]    public TenableEntityRef? Repository { get; set; }
+    [JsonPropertyName("schedule")]      public TenableSchedule? Schedule { get; set; }
+    [JsonPropertyName("policy")]        public TenableEntityRef? Policy { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+// =======================
+// Helper Objects
+// =======================
+
+public sealed class TenableSeverity
+{
+    [JsonPropertyName("id")]           public string? Id { get; set; }   // "0", "1", "2", "3", "4"
+    [JsonPropertyName("name")]         public string? Name { get; set; } // "Info", "Low", "Medium", "High", "Critical"
+    [JsonPropertyName("description")]  public string? Description { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class TenableEntityRef
+{
+    [JsonPropertyName("id")]           public string? Id { get; set; }
+    [JsonPropertyName("name")]         public string? Name { get; set; }
+    [JsonPropertyName("description")]  public string? Description { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class TenableUserRef
+{
+    [JsonPropertyName("id")]           public string? Id { get; set; }
+    [JsonPropertyName("username")]     public string? Username { get; set; }
+    [JsonPropertyName("firstname")]    public string? FirstName { get; set; }
+    [JsonPropertyName("lastname")]     public string? LastName { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+public sealed class TenableSchedule
+{
+    [JsonPropertyName("id")]           public string? Id { get; set; }
+    [JsonPropertyName("type")]         public string? Type { get; set; } // "never", "daily", "weekly", etc.
+    [JsonPropertyName("start")]        public string? Start { get; set; }
+    [JsonPropertyName("repeatRule")]   public string? RepeatRule { get; set; }
+
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
