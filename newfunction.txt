@@ -1,6 +1,43 @@
-index=zscaler
-| eval query_domain=replace(url, "^https?://([^/]+).*", "\1")
-| lookup top1m.csv domain AS query_domain OUTPUT domain as is_found
-| where isnull(is_found)
-| stats count by query_domain
+Method 1: The "Standard" Way (Shannon Entropy)
+Requires the free URL Toolbox app from Splunkbase.
+This is the industry-standard method. It calculates a mathematical "randomness" score (Shannon Entropy) for every domain.[1] Legitimate domains like google.com have low entropy (~2.5), while DGA domains like xkjzq821.com have high entropy (>4.0).
+code
+Splunk
+index=network_logs (sourcetype=stream:dns OR sourcetype=bro:dns OR tag=dns)
+| lookup ut_parse_extended url AS query OUTPUT ut_domain
+| `ut_shannon(ut_domain)`
+| where ut_shannon > 3.5
+| stats count values(query) as samples by ut_domain ut_shannon
+| sort - ut_shannon
+ut_parse_extended: Smartly strips subdomains and TLDs to get the root domain.
+ut_shannon: Calculates the entropy score.[1]
+> 3.5: A good starting threshold. Increase to 4.0 if you see too many false positives (like CDNs).
+Method 2: The "No-App" Way (Linguistic Analysis)
+Use this if you cannot install apps. It uses raw SPL to calculate randomness proxies.
+This search calculates the Consonant-to-Vowel Ratio and Domain Length. DGA domains often lack vowels (e.g., brkngz) or are unusually long.
+code
+Splunk
+index=network_logs tag=dns
+| eval domain=replace(query, "^https?://([^/]+).*", "\1") 
+| eval domain_length=len(domain)
+| rex field=domain mode=sed "s/[^a-zA-Z]//g" 
+| eval clean_domain=domain
+| eval vowel_count=len(replace(clean_domain, "[^aeiouAEIOU]", ""))
+| eval consonant_count=len(replace(clean_domain, "[aeiouAEIOU]", ""))
+| eval cv_ratio = consonant_count / nullif(vowel_count, 0)
+| where domain_length > 15 AND (cv_ratio > 5 OR isnull(cv_ratio))
+| stats count by domain cv_ratio domain_length
 | sort - count
+Logic: Legitimate English words usually have a C/V ratio around 2:1. If a domain has 15+ characters and a ratio > 5 (or no vowels at all), it is highly suspicious.
+Method 3: The "Behavioral" Way (NXDOMAIN Spikes)
+DGA malware often tries to connect to thousands of domains before finding one that works. This creates a massive spike in "Name Error" (NXDOMAIN) responses.
+code
+Splunk
+index=network_logs tag=dns message_type="RESPONSE" reply_code="NXDOMAIN"
+| bucket _time span=1h
+| stats count as nx_count distinct_count(query) as unique_domains by src_ip _time
+| eventstats avg(nx_count) as avg_nx stdev(nx_count) as stdev_nx by src_ip
+| where nx_count > (avg_nx + (3 * stdev_nx)) AND nx_count > 100
+| eval anomaly_score = (nx_count - avg_nx) / stdev_nx
+| table _time src_ip nx_count unique_domains anomaly_score
+| sort - anomaly_score
