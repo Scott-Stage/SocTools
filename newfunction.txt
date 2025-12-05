@@ -1,40 +1,6 @@
-public async Task<string> GetTenableData()
-{
-    // 1. Bypass Self-Signed Cert errors (Common with on-prem Tenable.SC)
-    var handler = new HttpClientHandler
-    {
-        ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true
-    };
-
-    using var client = new HttpClient(handler);
-
-    // 2. Construct the URL
-    // CRITICAL: Must include "/rest"
-    string baseUrl = "https://your-tenable-sc-ip/rest"; 
-    string endpoint = $"{baseUrl}/agentScan"; 
-
-    var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
-
-    // 3. Add the Header
-    // CRITICAL: Header name is "x-apikey"
-    // CRITICAL: Value format is "accesskey=123...; secretkey=456..." (semicolon separated)
-    string accessKey = "YOUR_ACCESS_KEY";
-    string secretKey = "YOUR_SECRET_KEY";
-    
-    request.Headers.Add("x-apikey", $"accesskey={accessKey}; secretkey={secretKey}");
-
-    // 4. Send
-    var response = await client.SendAsync(request);
-
-    // 5. Check Content Type BEFORE assuming success
-    string content = await response.Content.ReadAsStringAsync();
-
-    if (response.Content.Headers.ContentType?.MediaType == "text/html")
-    {
-        // If we get here, Auth failed, and we got the Login Page HTML
-        throw new Exception("Authentication Failed: Server returned HTML instead of JSON.");
-    }
-
-    response.EnsureSuccessStatusCode();
-    return content;
-}
+index=zscaler
+| eval query_domain=replace(url, "^https?://([^/]+).*", "\1")
+| lookup top1m.csv domain AS query_domain OUTPUT domain as is_found
+| where isnull(is_found)
+| stats count by query_domain
+| sort - count
