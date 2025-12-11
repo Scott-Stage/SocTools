@@ -1,21 +1,8 @@
-public async Task<string?> FindScanIdByName(string scanName)
+public sealed class TenableScResponse<T>
 {
-    // 1. Get ALL usable scans (optimized to only return id and name)
-    var requestUrl = $"{base_url}/scan?fields=id,name&filter=usable";
-    
-    // ... send request ...
-    var content = await response.Content.ReadAsStringAsync();
-
-    // 2. Deserialize
-    var result = JsonSerializer.Deserialize<TenableScResponse<TenableScanListResult<TenableScan>>>(content);
-    
-    // 3. Filter in C# (Client-Side)
-    var match = result?.Response?.Usable?.FirstOrDefault(s => s.Name == scanName);
-
-    if (match != null)
-    {
-        Console.WriteLine($"Found Scan: {match.Name} (ID: {match.Id})");
-        return match.Id;
-    }
-    return null;
+    [JsonPropertyName("type")]      public string? Type { get; set; }      // e.g., "regular"
+    [JsonPropertyName("response")]  public T? Response { get; set; }       // The actual data
+    [JsonPropertyName("error_code")]public int? ErrorCode { get; set; }
+    [JsonPropertyName("error_msg")] public string? ErrorMsg { get; set; }
+    [JsonPropertyName("timestamp")] public string? Timestamp { get; set; }
 }
