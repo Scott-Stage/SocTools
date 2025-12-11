@@ -1,24 +1,132 @@
-index=network_logs tag=dns message_type="RESPONSE" reply_code="NXDOMAIN"
-| bucket _time span=1h
-| stats count as nx_count by src_ip _time
-| eventstats avg(nx_count) as avg_nx stdev(nx_count) as stdev_nx by src_ip
-| where nx_count > (avg_nx + (3 * stdev_nx)) AND nx_count > 100
-| eval outlier_label = src_ip + " (Anomaly Score: " + round((nx_count - avg_nx) / stdev_nx, 1) + ")"
-| xyseries _time outlier_label nx_count
-Why this works:
-The Math: It performs the same Z-score filtering to find the bad IPs.
-xyseries: This is the magic command. It takes the resulting table and pivots it so _time is the X-Axis, outlier_label (the IP) is the Legend, and nx_count is the Y-Axis.
-Option 2: The "DGA Pattern" Chart (Scatter Plot)
-DGA malware is distinct because it produces High Failure Counts AND High Uniqueness (it tries 1000 different random domains, not just 1000 requests to the same domain).
-This visualization plots that relationship. DGA infections will appear in the top-right quadrant.
-Visualization Type: Scatter Chart
-X-Axis: unique_domains
-Y-Axis: nx_count
+using System;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Collections.Generic;
+
+#nullable enable
+
+// ==========================================
+// POST /rest/analysis
+// Usage: client.PostAsJsonAsync(url, new TenableAnalysisRequest { ... });
+// ==========================================
+public sealed class TenableAnalysisRequest
+{
+    [JsonPropertyName("type")]          public string Type { get; set; } = "vuln";
+    [JsonPropertyName("sourceType")]    public string SourceType { get; set; } = "cumulative"; // cumulative | patched | individual
+    [JsonPropertyName("query")]         public TenableQuery? Query { get; set; }
+    
+    // Optional: Sort order
+    [JsonPropertyName("sortField")]     public string? SortField { get; set; } // e.g., "severity"
+    [JsonPropertyName("sortDir")]       public string? SortDir { get; set; }   // "asc" or "desc"
+}
+
+public sealed class TenableQuery
+{
+    [JsonPropertyName("type")]          public string Type { get; set; } = "vuln";
+    [JsonPropertyName("tool")]          public string Tool { get; set; } = "vulndetails"; // vulndetails | listvuln | sumid
+    [JsonPropertyName("sourceType")]    public string SourceType { get; set; } = "cumulative";
+    
+    [JsonPropertyName("startOffset")]   public int StartOffset { get; set; } = 0;
+    [JsonPropertyName("endOffset")]     public int EndOffset { get; set; } = 1000;
+    
+    [JsonPropertyName("filters")]       public List<TenableFilter>? Filters { get; set; }
+}
+
+public sealed class TenableFilter
+{
+    [JsonPropertyName("filterName")]    public string? FilterName { get; set; } // e.g., "ip", "severity", "pluginID"
+    [JsonPropertyName("operator")]      public string? Operator { get; set; }   // "=", "LIKE", ">", etc.
+    [JsonPropertyName("value")]         public string? Value { get; set; }
+}
+2. The Response Model
+Use this to parse the data returned by Tenable.
+Note: The MatchingData list contains the actual vulnerabilities. The fields populated depend heavily on the tool you requested (e.g., vulndetails returns almost everything, while listvuln returns a summary).
 code
-Splunk
-index=network_logs tag=dns message_type="RESPONSE" reply_code="NXDOMAIN"
-| stats count as nx_count distinct_count(query) as unique_domains by src_ip
-| eventstats avg(nx_count) as avg_nx stdev(nx_count) as stdev_nx
-| eval is_outlier = if(nx_count > (avg_nx + (3 * stdev_nx)), "Critical", "Normal")
-| search is_outlier="Critical"
-| table src_ip nx_count unique_domains
+C#
+// ==========================================
+// Response Wrapper
+// Usage: JsonSerializer.Deserialize<TenableScResponse<TenableAnalysisResult>>(json);
+// ==========================================
+public sealed class TenableAnalysisResult
+{
+    // Tenable returns totalRecords as a string (e.g., "1540")
+    [JsonPropertyName("totalRecords")]     public string? TotalRecords { get; set; }
+    [JsonPropertyName("returnedRecords")]  public int? ReturnedRecords { get; set; }
+    [JsonPropertyName("startOffset")]      public int? StartOffset { get; set; }
+    [JsonPropertyName("endOffset")]        public int? EndOffset { get; set; }
+    
+    // The list of vulnerabilities found
+    [JsonPropertyName("matchingData")]     public List<TenableVulnerability>? MatchingData { get; set; }
+}
+
+public sealed class TenableVulnerability
+{
+    // Identity
+    [JsonPropertyName("pluginID")]         public string? PluginId { get; set; }
+    [JsonPropertyName("uuid")]             public string? Uuid { get; set; }
+    [JsonPropertyName("port")]             public string? Port { get; set; }
+    [JsonPropertyName("protocol")]         public string? Protocol { get; set; }
+    
+    // Host Info
+    [JsonPropertyName("ip")]               public string? IpAddress { get; set; }
+    [JsonPropertyName("dnsName")]          public string? DnsName { get; set; }
+    [JsonPropertyName("macAddress")]       public string? MacAddress { get; set; }
+    [JsonPropertyName("netbiosName")]      public string? NetbiosName { get; set; }
+    [JsonPropertyName("os")]               public string? Os { get; set; }
+    [JsonPropertyName("uniqueness")]       public string? Uniqueness { get; set; } // repository|ip|port|protocol|pluginID
+
+    // Vulnerability Details
+    [JsonPropertyName("pluginName")]       public string? PluginName { get; set; }
+    [JsonPropertyName("description")]      public string? Description { get; set; }
+    [JsonPropertyName("synopsis")]         public string? Synopsis { get; set; }
+    [JsonPropertyName("solution")]         public string? Solution { get; set; }
+    [JsonPropertyName("seeAlso")]          public string? SeeAlso { get; set; }
+    [JsonPropertyName("pluginText")]       public string? PluginText { get; set; } // The specific output (proof)
+    
+    // Risk / Scoring
+    // Note: In 'vulndetails', Severity is an Object. In 'listvuln', it might be a String ID.
+    // We map it as a custom object here, assuming 'vulndetails'.
+    [JsonPropertyName("severity")]         public TenableSeverityObj? Severity { get; set; }
+    [JsonPropertyName("baseScore")]        public string? BaseScore { get; set; }
+    [JsonPropertyName("temporalScore")]    public string? TemporalScore { get; set; }
+    [JsonPropertyName("cvssVector")]       public string? CvssVector { get; set; }
+    [JsonPropertyName("cvssV3BaseScore")]  public string? CvssV3BaseScore { get; set; }
+    [JsonPropertyName("cvssV3Vector")]     public string? CvssV3Vector { get; set; }
+    [JsonPropertyName("riskFactor")]       public string? RiskFactor { get; set; } // None, Low, Medium, High, Critical
+
+    // Dates (Unix Timestamps as Strings)
+    [JsonPropertyName("firstSeen")]        public string? FirstSeen { get; set; }
+    [JsonPropertyName("lastSeen")]         public string? LastSeen { get; set; }
+    [JsonPropertyName("pluginPubDate")]    public string? PluginPubDate { get; set; }
+    [JsonPropertyName("pluginModDate")]    public string? PluginModDate { get; set; }
+    
+    // Metadata / Context
+    [JsonPropertyName("repository")]       public TenableEntityRef? Repository { get; set; }
+    [JsonPropertyName("pluginFamily")]     public TenableEntityRef? PluginFamily { get; set; }
+    
+    // Exploitability
+    [JsonPropertyName("exploitAvailable")] public string? ExploitAvailable { get; set; } // "yes" or "no"
+    [JsonPropertyName("exploitEase")]      public string? ExploitEase { get; set; }
+    [JsonPropertyName("exploitFrameworks")]public string? ExploitFrameworks { get; set; }
+
+    // Catch-all for extra fields
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+// Helper Class for Severity Object
+public sealed class TenableSeverityObj
+{
+    [JsonPropertyName("id")]           public string? Id { get; set; }
+    [JsonPropertyName("name")]         public string? Name { get; set; }
+    [JsonPropertyName("description")]  public string? Description { get; set; }
+}
+
+// Reusing generic wrapper from previous examples for context
+public sealed class TenableScResponse<T>
+{
+    [JsonPropertyName("type")]         public string? Type { get; set; }
+    [JsonPropertyName("response")]     public T? Response { get; set; }
+    [JsonPropertyName("error_code")]   public int? ErrorCode { get; set; }
+    [JsonPropertyName("error_msg")]    public string? ErrorMsg { get; set; }
+    [JsonPropertyName("timestamp")]    public string? Timestamp { get; set; }
+}
