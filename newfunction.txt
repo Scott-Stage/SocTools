@@ -1,26 +1,7 @@
-// 1. Use 'Where' to find ALL matches
-// Adding .ToList() executes the query immediately so you can inspect it
-var matches = result?.Response?.Usable?
-    .Where(s => s.Name == "Database Confidential Zone 72-73")
-    .ToList();
-
-// 2. Loop through them to see the IDs
-if (matches != null && matches.Count > 0)
+public sealed class TenableAnalysisResult
 {
-    Console.WriteLine($"Found {matches.Count} matches:");
-    foreach (var scan in matches)
-    {
-        Console.WriteLine($" - Name: {scan.Name}, ID: {scan.Id}");
-    }
-}
-else
-{
-    Console.WriteLine("No matches found.");
-}
-Flexible Matching (Optional)
-If you want to find all scans that contain that text (partial match), use .Contains() instead:
-code
-C#
-var matches = result?.Response?.Usable?
-    .Where(s => s.Name != null && s.Name.Contains("Database Confidential Zone"))
-    .ToList();
+    [JsonPropertyName("totalRecords")]     public string? TotalRecords { get; set; }
+    
+    // This is where the actual data lives
+    [JsonPropertyName("matchingData")]     public List<TenableVulnerability>? MatchingData { get; set; }
+} 
