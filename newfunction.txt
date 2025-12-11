@@ -1,86 +1,11 @@
+using System.Text;
+using System.Text.Json;
+using System.Net.Http;
+using System.Threading.Tasks;
 
-The POST /rest/analysis endpoint is the "search engine" of the Tenable.SC API. Unlike typical REST APIs where you might GET /vulnerabilities, Tenable requires you to POST a query object to retrieve vulnerability data.
-This endpoint is highly flexible. Depending on the tool parameter you send, it can return a summary of counts, a list of vulnerabilities, or full detailed evidence (plugin output).
-Core Concepts
-It's Asynchronous (Sort of): For small datasets, it returns immediately. For massive datasets, you typically request a query, and if it's too large, it might force you to use proper pagination.
-The "Tool" Parameter: This is the most important field. It dictates the "view" of the data:
-listvuln: Returns a list of vulnerabilities (like a spreadsheet row). Best for general reporting.
-vulndetails: Returns the full details, including plugin text (proof of vulnerability).
-sumid: Returns a summary count grouped by Plugin ID (e.g., "Plugin 19506 seen 500 times").
-sumip: Returns a summary count grouped by IP address.
-Source Type:
-cumulative: The current, live state of your network (what is active now).
-patched: Vulnerabilities that were fixed (moved to the mitigation database).
-Scenario 1: Get a List of High Severity Vulnerabilities
-This is the most common use case. You want a list of active vulnerabilities with Severity >= High.
-Request (POST /rest/analysis):
-code
-JSON
+public async Task<List<TenableVulnerability>> GetVulnerabilities()
 {
-  "type": "vuln",
-  "query": {
-    "type": "vuln",
-    "tool": "listvuln", 
-    "sourceType": "cumulative",
-    "startOffset": 0,
-    "endOffset": 50,
-    "filters": [
-      {
-        "filterName": "severity",
-        "operator": "=",
-        "value": "3,4"  // 3=High, 4=Critical
-      }
-    ]
-  }
-}
-Key Response Fields:
-You will get a list of objects containing fields like pluginID, severity (id/name), ip, dnsName, and pluginName.
-Scenario 2: Get Specific Proof (Plugin Output)
-Use this when you need the "Plugin Text" (the actual evidence, like "Apache 2.4.1 detected"). You usually query this for a specific Plugin ID and specific IP.
-Note: You must use tool: "vulndetails".
-Request:
-code
-JSON
-{
-  "type": "vuln",
-  "query": {
-    "type": "vuln",
-    "tool": "vulndetails",
-    "sourceType": "cumulative",
-    "filters": [
-      {
-        "filterName": "ip",
-        "operator": "=",
-        "value": "192.168.1.50"
-      },
-      {
-        "filterName": "pluginID",
-        "operator": "=",
-        "value": "11011"
-      }
-    ]
-  }
-}
-Key Response Fields:
-This view includes everything from listvuln PLUS:
-pluginText: The specific console output from the scan.
-solution: Detailed remediation steps.
-description: Full text description.
-synopsis: Brief summary.
-Scenario 3: Pagination (Looping through results)
-The API limits how many records it returns at once (default is often 1,000). You must implement pagination if you expect many results.
-Request 1: startOffset: 0, endOffset: 1000
-Response: Check totalRecords (e.g., "5400").
-Loop:
-Request 2: startOffset: 1000, endOffset: 2000
-Request 3: startOffset: 2000, endOffset: 3000
-...until endOffset >= totalRecords.
-C# Usage Example
-Here is how you would use the data models provided earlier to perform a query.
-code
-C#
-public async Task<List<TenableVulnerability>> GetHighSeverityVulns()
-{
+    // 1. Create the Request Object (using the Data Model)
     var analysisRequest = new TenableAnalysisRequest
     {
         Type = "vuln",
@@ -89,25 +14,54 @@ public async Task<List<TenableVulnerability>> GetHighSeverityVulns()
             Tool = "listvuln",
             SourceType = "cumulative",
             StartOffset = 0,
-            EndOffset = 1000, // Fetch up to 1000
+            EndOffset = 1000,
             Filters = new List<TenableFilter>
             {
-                new TenableFilter 
-                { 
-                    FilterName = "severity", 
-                    Operator = "=", 
+                new TenableFilter
+                {
+                    FilterName = "severity",
+                    Operator = "=",
                     Value = "3,4" // High, Critical
                 }
             }
         }
     };
 
-    // Assuming you have a helper method PostAsJsonAsync that handles the headers/auth
-    var response = await client.PostAsJsonAsync($"{base_url}/analysis", analysisRequest);
-    var content = await response.Content.ReadAsStringAsync();
+    // 2. Serialize to JSON String
+    string jsonPayload = JsonSerializer.Serialize(analysisRequest);
+
+    // 3. Create Content (The Fix)
+    // ❌ DO NOT USE: new FormUrlEncodedContent(...)
+    // ✅ USE THIS:
+    using var httpContent = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+    // 4. Setup Client (Reuse your existing handler setup)
+    var handler = new HttpClientHandler 
+    { 
+        UseCookies = false,
+        ServerCertificateCustomValidationCallback = (m, c, ch, e) => true 
+    };
+
+    using var client = new HttpClient(handler);
     
-    // Deserialize using the wrapper
-    var result = JsonSerializer.Deserialize<TenableScResponse<TenableAnalysisResult>>(content);
+    // Add Auth Headers (as discussed previously)
+    string authHeader = $"accessKey={accessKey.Trim()}; secretKey={secretKey.Trim()}";
+    client.DefaultRequestHeaders.TryAddWithoutValidation("X-ApiKey", authHeader);
+
+    // 5. Send POST
+    var response = await client.PostAsync($"{base_url}/analysis", httpContent);
+
+    // 6. Handle Response
+    string responseBody = await response.Content.ReadAsStringAsync();
     
+    if (!response.IsSuccessStatusCode)
+    {
+        Console.WriteLine($"Error {response.StatusCode}: {responseBody}");
+        return new List<TenableVulnerability>();
+    }
+
+    // 7. Deserialize Result
+    var result = JsonSerializer.Deserialize<TenableScResponse<TenableAnalysisResult>>(responseBody);
+
     return result?.Response?.MatchingData ?? new List<TenableVulnerability>();
 }
