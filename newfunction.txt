@@ -1,67 +1,21 @@
-using System.Text;
-using System.Text.Json;
-using System.Net.Http;
-using System.Threading.Tasks;
-
-public async Task<List<TenableVulnerability>> GetVulnerabilities()
+public async Task<string?> FindScanIdByName(string scanName)
 {
-    // 1. Create the Request Object (using the Data Model)
-    var analysisRequest = new TenableAnalysisRequest
-    {
-        Type = "vuln",
-        Query = new TenableQuery
-        {
-            Tool = "listvuln",
-            SourceType = "cumulative",
-            StartOffset = 0,
-            EndOffset = 1000,
-            Filters = new List<TenableFilter>
-            {
-                new TenableFilter
-                {
-                    FilterName = "severity",
-                    Operator = "=",
-                    Value = "3,4" // High, Critical
-                }
-            }
-        }
-    };
-
-    // 2. Serialize to JSON String
-    string jsonPayload = JsonSerializer.Serialize(analysisRequest);
-
-    // 3. Create Content (The Fix)
-    // ❌ DO NOT USE: new FormUrlEncodedContent(...)
-    // ✅ USE THIS:
-    using var httpContent = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-
-    // 4. Setup Client (Reuse your existing handler setup)
-    var handler = new HttpClientHandler 
-    { 
-        UseCookies = false,
-        ServerCertificateCustomValidationCallback = (m, c, ch, e) => true 
-    };
-
-    using var client = new HttpClient(handler);
+    // 1. Get ALL usable scans (optimized to only return id and name)
+    var requestUrl = $"{base_url}/scan?fields=id,name&filter=usable";
     
-    // Add Auth Headers (as discussed previously)
-    string authHeader = $"accessKey={accessKey.Trim()}; secretKey={secretKey.Trim()}";
-    client.DefaultRequestHeaders.TryAddWithoutValidation("X-ApiKey", authHeader);
+    // ... send request ...
+    var content = await response.Content.ReadAsStringAsync();
 
-    // 5. Send POST
-    var response = await client.PostAsync($"{base_url}/analysis", httpContent);
-
-    // 6. Handle Response
-    string responseBody = await response.Content.ReadAsStringAsync();
+    // 2. Deserialize
+    var result = JsonSerializer.Deserialize<TenableScResponse<TenableScanListResult<TenableScan>>>(content);
     
-    if (!response.IsSuccessStatusCode)
+    // 3. Filter in C# (Client-Side)
+    var match = result?.Response?.Usable?.FirstOrDefault(s => s.Name == scanName);
+
+    if (match != null)
     {
-        Console.WriteLine($"Error {response.StatusCode}: {responseBody}");
-        return new List<TenableVulnerability>();
+        Console.WriteLine($"Found Scan: {match.Name} (ID: {match.Id})");
+        return match.Id;
     }
-
-    // 7. Deserialize Result
-    var result = JsonSerializer.Deserialize<TenableScResponse<TenableAnalysisResult>>(responseBody);
-
-    return result?.Response?.MatchingData ?? new List<TenableVulnerability>();
+    return null;
 }
