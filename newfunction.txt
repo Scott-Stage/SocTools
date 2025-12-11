@@ -1,8 +1,10 @@
-public sealed class TenableScResponse<T>
+public sealed class TenableScanListResult<T>
 {
-    [JsonPropertyName("type")]      public string? Type { get; set; }      // e.g., "regular"
-    [JsonPropertyName("response")]  public T? Response { get; set; }       // The actual data
-    [JsonPropertyName("error_code")]public int? ErrorCode { get; set; }
-    [JsonPropertyName("error_msg")] public string? ErrorMsg { get; set; }
-    [JsonPropertyName("timestamp")] public string? Timestamp { get; set; }
+    // The list of scans the user has permission to launch/view
+    [JsonPropertyName("usable")] 
+    public List<T>? Usable { get; set; }
+
+    // The list of scans the user has permission to edit/configure
+    [JsonPropertyName("manageable")] 
+    public List<T>? Manageable { get; set; }
 }
