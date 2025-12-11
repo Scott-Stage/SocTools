@@ -1,132 +1,113 @@
-using System;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Collections.Generic;
 
-#nullable enable
-
-// ==========================================
-// POST /rest/analysis
-// Usage: client.PostAsJsonAsync(url, new TenableAnalysisRequest { ... });
-// ==========================================
-public sealed class TenableAnalysisRequest
+The POST /rest/analysis endpoint is the "search engine" of the Tenable.SC API. Unlike typical REST APIs where you might GET /vulnerabilities, Tenable requires you to POST a query object to retrieve vulnerability data.
+This endpoint is highly flexible. Depending on the tool parameter you send, it can return a summary of counts, a list of vulnerabilities, or full detailed evidence (plugin output).
+Core Concepts
+It's Asynchronous (Sort of): For small datasets, it returns immediately. For massive datasets, you typically request a query, and if it's too large, it might force you to use proper pagination.
+The "Tool" Parameter: This is the most important field. It dictates the "view" of the data:
+listvuln: Returns a list of vulnerabilities (like a spreadsheet row). Best for general reporting.
+vulndetails: Returns the full details, including plugin text (proof of vulnerability).
+sumid: Returns a summary count grouped by Plugin ID (e.g., "Plugin 19506 seen 500 times").
+sumip: Returns a summary count grouped by IP address.
+Source Type:
+cumulative: The current, live state of your network (what is active now).
+patched: Vulnerabilities that were fixed (moved to the mitigation database).
+Scenario 1: Get a List of High Severity Vulnerabilities
+This is the most common use case. You want a list of active vulnerabilities with Severity >= High.
+Request (POST /rest/analysis):
+code
+JSON
 {
-    [JsonPropertyName("type")]          public string Type { get; set; } = "vuln";
-    [JsonPropertyName("sourceType")]    public string SourceType { get; set; } = "cumulative"; // cumulative | patched | individual
-    [JsonPropertyName("query")]         public TenableQuery? Query { get; set; }
-    
-    // Optional: Sort order
-    [JsonPropertyName("sortField")]     public string? SortField { get; set; } // e.g., "severity"
-    [JsonPropertyName("sortDir")]       public string? SortDir { get; set; }   // "asc" or "desc"
+  "type": "vuln",
+  "query": {
+    "type": "vuln",
+    "tool": "listvuln", 
+    "sourceType": "cumulative",
+    "startOffset": 0,
+    "endOffset": 50,
+    "filters": [
+      {
+        "filterName": "severity",
+        "operator": "=",
+        "value": "3,4"  // 3=High, 4=Critical
+      }
+    ]
+  }
 }
-
-public sealed class TenableQuery
+Key Response Fields:
+You will get a list of objects containing fields like pluginID, severity (id/name), ip, dnsName, and pluginName.
+Scenario 2: Get Specific Proof (Plugin Output)
+Use this when you need the "Plugin Text" (the actual evidence, like "Apache 2.4.1 detected"). You usually query this for a specific Plugin ID and specific IP.
+Note: You must use tool: "vulndetails".
+Request:
+code
+JSON
 {
-    [JsonPropertyName("type")]          public string Type { get; set; } = "vuln";
-    [JsonPropertyName("tool")]          public string Tool { get; set; } = "vulndetails"; // vulndetails | listvuln | sumid
-    [JsonPropertyName("sourceType")]    public string SourceType { get; set; } = "cumulative";
-    
-    [JsonPropertyName("startOffset")]   public int StartOffset { get; set; } = 0;
-    [JsonPropertyName("endOffset")]     public int EndOffset { get; set; } = 1000;
-    
-    [JsonPropertyName("filters")]       public List<TenableFilter>? Filters { get; set; }
+  "type": "vuln",
+  "query": {
+    "type": "vuln",
+    "tool": "vulndetails",
+    "sourceType": "cumulative",
+    "filters": [
+      {
+        "filterName": "ip",
+        "operator": "=",
+        "value": "192.168.1.50"
+      },
+      {
+        "filterName": "pluginID",
+        "operator": "=",
+        "value": "11011"
+      }
+    ]
+  }
 }
-
-public sealed class TenableFilter
-{
-    [JsonPropertyName("filterName")]    public string? FilterName { get; set; } // e.g., "ip", "severity", "pluginID"
-    [JsonPropertyName("operator")]      public string? Operator { get; set; }   // "=", "LIKE", ">", etc.
-    [JsonPropertyName("value")]         public string? Value { get; set; }
-}
-2. The Response Model
-Use this to parse the data returned by Tenable.
-Note: The MatchingData list contains the actual vulnerabilities. The fields populated depend heavily on the tool you requested (e.g., vulndetails returns almost everything, while listvuln returns a summary).
+Key Response Fields:
+This view includes everything from listvuln PLUS:
+pluginText: The specific console output from the scan.
+solution: Detailed remediation steps.
+description: Full text description.
+synopsis: Brief summary.
+Scenario 3: Pagination (Looping through results)
+The API limits how many records it returns at once (default is often 1,000). You must implement pagination if you expect many results.
+Request 1: startOffset: 0, endOffset: 1000
+Response: Check totalRecords (e.g., "5400").
+Loop:
+Request 2: startOffset: 1000, endOffset: 2000
+Request 3: startOffset: 2000, endOffset: 3000
+...until endOffset >= totalRecords.
+C# Usage Example
+Here is how you would use the data models provided earlier to perform a query.
 code
 C#
-// ==========================================
-// Response Wrapper
-// Usage: JsonSerializer.Deserialize<TenableScResponse<TenableAnalysisResult>>(json);
-// ==========================================
-public sealed class TenableAnalysisResult
+public async Task<List<TenableVulnerability>> GetHighSeverityVulns()
 {
-    // Tenable returns totalRecords as a string (e.g., "1540")
-    [JsonPropertyName("totalRecords")]     public string? TotalRecords { get; set; }
-    [JsonPropertyName("returnedRecords")]  public int? ReturnedRecords { get; set; }
-    [JsonPropertyName("startOffset")]      public int? StartOffset { get; set; }
-    [JsonPropertyName("endOffset")]        public int? EndOffset { get; set; }
+    var analysisRequest = new TenableAnalysisRequest
+    {
+        Type = "vuln",
+        Query = new TenableQuery
+        {
+            Tool = "listvuln",
+            SourceType = "cumulative",
+            StartOffset = 0,
+            EndOffset = 1000, // Fetch up to 1000
+            Filters = new List<TenableFilter>
+            {
+                new TenableFilter 
+                { 
+                    FilterName = "severity", 
+                    Operator = "=", 
+                    Value = "3,4" // High, Critical
+                }
+            }
+        }
+    };
+
+    // Assuming you have a helper method PostAsJsonAsync that handles the headers/auth
+    var response = await client.PostAsJsonAsync($"{base_url}/analysis", analysisRequest);
+    var content = await response.Content.ReadAsStringAsync();
     
-    // The list of vulnerabilities found
-    [JsonPropertyName("matchingData")]     public List<TenableVulnerability>? MatchingData { get; set; }
-}
-
-public sealed class TenableVulnerability
-{
-    // Identity
-    [JsonPropertyName("pluginID")]         public string? PluginId { get; set; }
-    [JsonPropertyName("uuid")]             public string? Uuid { get; set; }
-    [JsonPropertyName("port")]             public string? Port { get; set; }
-    [JsonPropertyName("protocol")]         public string? Protocol { get; set; }
+    // Deserialize using the wrapper
+    var result = JsonSerializer.Deserialize<TenableScResponse<TenableAnalysisResult>>(content);
     
-    // Host Info
-    [JsonPropertyName("ip")]               public string? IpAddress { get; set; }
-    [JsonPropertyName("dnsName")]          public string? DnsName { get; set; }
-    [JsonPropertyName("macAddress")]       public string? MacAddress { get; set; }
-    [JsonPropertyName("netbiosName")]      public string? NetbiosName { get; set; }
-    [JsonPropertyName("os")]               public string? Os { get; set; }
-    [JsonPropertyName("uniqueness")]       public string? Uniqueness { get; set; } // repository|ip|port|protocol|pluginID
-
-    // Vulnerability Details
-    [JsonPropertyName("pluginName")]       public string? PluginName { get; set; }
-    [JsonPropertyName("description")]      public string? Description { get; set; }
-    [JsonPropertyName("synopsis")]         public string? Synopsis { get; set; }
-    [JsonPropertyName("solution")]         public string? Solution { get; set; }
-    [JsonPropertyName("seeAlso")]          public string? SeeAlso { get; set; }
-    [JsonPropertyName("pluginText")]       public string? PluginText { get; set; } // The specific output (proof)
-    
-    // Risk / Scoring
-    // Note: In 'vulndetails', Severity is an Object. In 'listvuln', it might be a String ID.
-    // We map it as a custom object here, assuming 'vulndetails'.
-    [JsonPropertyName("severity")]         public TenableSeverityObj? Severity { get; set; }
-    [JsonPropertyName("baseScore")]        public string? BaseScore { get; set; }
-    [JsonPropertyName("temporalScore")]    public string? TemporalScore { get; set; }
-    [JsonPropertyName("cvssVector")]       public string? CvssVector { get; set; }
-    [JsonPropertyName("cvssV3BaseScore")]  public string? CvssV3BaseScore { get; set; }
-    [JsonPropertyName("cvssV3Vector")]     public string? CvssV3Vector { get; set; }
-    [JsonPropertyName("riskFactor")]       public string? RiskFactor { get; set; } // None, Low, Medium, High, Critical
-
-    // Dates (Unix Timestamps as Strings)
-    [JsonPropertyName("firstSeen")]        public string? FirstSeen { get; set; }
-    [JsonPropertyName("lastSeen")]         public string? LastSeen { get; set; }
-    [JsonPropertyName("pluginPubDate")]    public string? PluginPubDate { get; set; }
-    [JsonPropertyName("pluginModDate")]    public string? PluginModDate { get; set; }
-    
-    // Metadata / Context
-    [JsonPropertyName("repository")]       public TenableEntityRef? Repository { get; set; }
-    [JsonPropertyName("pluginFamily")]     public TenableEntityRef? PluginFamily { get; set; }
-    
-    // Exploitability
-    [JsonPropertyName("exploitAvailable")] public string? ExploitAvailable { get; set; } // "yes" or "no"
-    [JsonPropertyName("exploitEase")]      public string? ExploitEase { get; set; }
-    [JsonPropertyName("exploitFrameworks")]public string? ExploitFrameworks { get; set; }
-
-    // Catch-all for extra fields
-    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
-}
-
-// Helper Class for Severity Object
-public sealed class TenableSeverityObj
-{
-    [JsonPropertyName("id")]           public string? Id { get; set; }
-    [JsonPropertyName("name")]         public string? Name { get; set; }
-    [JsonPropertyName("description")]  public string? Description { get; set; }
-}
-
-// Reusing generic wrapper from previous examples for context
-public sealed class TenableScResponse<T>
-{
-    [JsonPropertyName("type")]         public string? Type { get; set; }
-    [JsonPropertyName("response")]     public T? Response { get; set; }
-    [JsonPropertyName("error_code")]   public int? ErrorCode { get; set; }
-    [JsonPropertyName("error_msg")]    public string? ErrorMsg { get; set; }
-    [JsonPropertyName("timestamp")]    public string? Timestamp { get; set; }
+    return result?.Response?.MatchingData ?? new List<TenableVulnerability>();
 }
