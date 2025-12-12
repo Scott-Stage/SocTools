@@ -1,10 +1,15 @@
+.sev-critical { background-color: #c22156; color: #fff; }
+.sev-high     { background-color: #ff9f40; color: #000; }
+.sev-medium   { background-color: #f6c343; color: #000; }
+.sev-low      { background-color: #6cc24a; color: #000; }
+.sev-none     { background-color: #6c757d; color: #fff; }
+
 <MudTd DataLabel="Severity">
-    <MudChip Class="@($"sev-{context.Severity.ToLowerInvariant()}")" Variant="Variant.Filled" Size="Size.Small">
+    @{
+        var raw = context.Severity ?? "none";
+        var sevClass = $"sev-{System.Text.RegularExpressions.Regex.Replace(raw, @"\s+", "-").ToLowerInvariant()}";
+    }
+    <MudChip Class="@sevClass" Variant="Variant.Filled" Size="Size.Small">
         @context.Severity
     </MudChip>
 </MudTd>
-
-.sev-critical { background-color: #c22156; color: #fff; }
-.sev-high     { background-color: #ff9f40; color: #000; }
-.sev-medium   { background-color: #17a2b8; color: #fff; }
-.sev-low      { background-color: #6c757d; color: #fff; }
