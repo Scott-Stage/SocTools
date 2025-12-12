@@ -1,37 +1,76 @@
-public class DeviceReport
+public async Task<List<TenableVulnerability>> GetVulnsAndSpecificInfos(string specificPluginIds)
 {
-    public TenableScan? Metadata { get; set; }
-    public List<TenableVulnerability>? Vulnerabilities { get; set; }
-}
+    // specificPluginIds example: "19506,11936,10180"
 
-public async Task<DeviceReport> GetFullDeviceReport(string scanId)
-{
-    // 2. Start both tasks (Run them in parallel for speed!)
-    //    Task 1: Get Metadata
-    var metadataTask = client.GetAsync($"{base_url}/scan/{scanId}?fields=id,name,status");
-    
-    //    Task 2: Get Vulns (using your existing logic)
-    var vulnRequest = new TenableAnalysisRequest { /* ... setup ... */ };
-    string jsonPayload = JsonSerializer.Serialize(vulnRequest);
-    using var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-    var vulnTask = client.PostAsync($"{base_url}/analysis", content);
-
-    // 3. Wait for both to finish
-    await Task.WhenAll(metadataTask, vulnTask);
-
-    // 4. Deserialize separately
-    var metaResponse = await metadataTask.Result.Content.ReadAsStringAsync();
-    var vulnResponse = await vulnTask.Result.Content.ReadAsStringAsync();
-
-    var metaObj = JsonSerializer.Deserialize<TenableScResponse<TenableScan>>(metaResponse);
-    var vulnObj = JsonSerializer.Deserialize<TenableScResponse<TenableAnalysisResult>>(vulnResponse);
-
-    // 5. Combine into your single object
-    var result = new DeviceReport
+    // ---------------------------------------------------------
+    // Request 1: Get All Highs and Criticals
+    // ---------------------------------------------------------
+    var highCritRequest = new TenableAnalysisRequest
     {
-        Metadata = metaObj?.Response,
-        Vulnerabilities = vulnObj?.Response?.Results ?? new List<TenableVulnerability>()
+        Type = "vuln",
+        Query = new TenableQuery
+        {
+            Tool = "listvuln",
+            SourceType = "cumulative",
+            Filters = new List<TenableFilter>
+            {
+                new TenableFilter { FilterName = "severity", Operator = "=", Value = "3,4" },
+                new TenableFilter { FilterName = "pluginType", Operator = "=", Value = "active" }
+            }
+        }
     };
 
-    return result;
+    // ---------------------------------------------------------
+    // Request 2: Get Specific Info Plugins (Ignore Severity Filter)
+    // ---------------------------------------------------------
+    var specificInfoRequest = new TenableAnalysisRequest
+    {
+        Type = "vuln",
+        Query = new TenableQuery
+        {
+            Tool = "listvuln",
+            SourceType = "cumulative",
+            Filters = new List<TenableFilter>
+            {
+                // ONLY filter by ID. This automatically includes them regardless of severity.
+                new TenableFilter 
+                { 
+                    FilterName = "pluginID", 
+                    Operator = "=", 
+                    Value = specificPluginIds 
+                }
+            }
+        }
+    };
+
+    // ---------------------------------------------------------
+    // 3. Execute Both in Parallel
+    // ---------------------------------------------------------
+    var taskHigh = FetchVulns(highCritRequest);
+    var taskInfo = FetchVulns(specificInfoRequest);
+
+    await Task.WhenAll(taskHigh, taskInfo);
+
+    // 4. Merge Results (DistinctBy handles potential duplicates if logic overlaps)
+    var allVulns = taskHigh.Result
+        .Concat(taskInfo.Result)
+        // Ensure no duplicates if a plugin happened to match both criteria
+        .GroupBy(v => v.PluginId + v.IpAddress + v.Port + v.Protocol) 
+        .Select(g => g.First())
+        .ToList();
+
+    return allVulns;
+}
+
+// Helper method to keep code clean
+private async Task<List<TenableVulnerability>> FetchVulns(TenableAnalysisRequest req)
+{
+    string json = JsonSerializer.Serialize(req);
+    using var content = new StringContent(json, Encoding.UTF8, "application/json");
+    
+    var response = await _httpClient.PostAsync($"{base_url}/analysis", content);
+    var respString = await response.Content.ReadAsStringAsync();
+    
+    var result = JsonSerializer.Deserialize<TenableScResponse<TenableAnalysisResult>>(respString);
+    return result?.Response?.Results ?? new List<TenableVulnerability>();
 }
