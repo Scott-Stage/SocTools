@@ -1,250 +1,65 @@
-@page "/tenable"
-@attribute [Authorize]
+public sealed class TenableScanResult
+{
+    // ----------------------------------------------------------------
+    // Identity & Status
+    // ----------------------------------------------------------------
+    [JsonPropertyName("id")]                public string? Id { get; set; }
+    [JsonPropertyName("name")]              public string? Name { get; set; }
+    [JsonPropertyName("description")]       public string? Description { get; set; }
+    
+    // Status: "Completed", "Running", "Partial", "Failed", "Pending"
+    [JsonPropertyName("status")]            public string? Status { get; set; }
+    
+    // Details: Usually "Finished in 123 seconds" or error text
+    [JsonPropertyName("details")]           public string? Details { get; set; }
 
-<PageTitle>Tenable Scan Results</PageTitle>
+    // ----------------------------------------------------------------
+    // Linking (The "Parent" Objects)
+    // ----------------------------------------------------------------
+    // The "Task" that created this result (e.g., Scan ID 9)
+    [JsonPropertyName("scan")]              public TenableEntityRef? ScanDefinition { get; set; }
+    
+    // The Repository where data is stored
+    [JsonPropertyName("repository")]        public TenableEntityRef? Repository { get; set; }
+    
+    // Who started it
+    [JsonPropertyName("initiator")]         public TenableUserRef? Initiator { get; set; }
+    [JsonPropertyName("owner")]             public TenableUserRef? Owner { get; set; }
+    [JsonPropertyName("ownerGroup")]        public TenableEntityRef? OwnerGroup { get; set; }
 
-<MudContainer MaxWidth="MaxWidth.False" Class="py-6">
-    <MudStack Spacing="3">
-        <MudPaper Elevation="2" Class="p-4">
-            <MudStack Direction="Row" AlignItems="AlignItems.Center" Spacing="2">
-                <MudText Typo="Typo.h5" Class="font-weight-bold">Scan Name</MudText>
-                <MudTextField Value="@ScanName" ReadOnly="true" Variant="Variant.Outlined" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Assessment" Class="flex-grow-1" />
-            </MudStack>
-        </MudPaper>
+    // ----------------------------------------------------------------
+    // Timestamps (Unix Epoch Strings)
+    // ----------------------------------------------------------------
+    [JsonPropertyName("startTime")]         public string? StartTime { get; set; }
+    [JsonPropertyName("finishTime")]        public string? FinishTime { get; set; }
+    
+    [JsonPropertyName("importStart")]       public string? ImportStart { get; set; }
+    [JsonPropertyName("importFinish")]      public string? ImportFinish { get; set; }
+    [JsonPropertyName("importStatus")]      public string? ImportStatus { get; set; } // "Finished"
 
-        @foreach (var device in Devices)
-        {
-            <MudPaper Elevation="3" Class="p-4">
-                <MudStack Spacing="3">
-                    <MudStack Direction="Row" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
-                        <MudText Typo="Typo.h5" Class="font-weight-bold">@device.Host.Hostname</MudText>
-                        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Refresh">Refresh</MudButton>
-                    </MudStack>
+    // ----------------------------------------------------------------
+    // Statistics / Metrics
+    // ----------------------------------------------------------------
+    [JsonPropertyName("totalIPs")]          public string? TotalIPs { get; set; }
+    [JsonPropertyName("scannedIPs")]        public string? ScannedIPs { get; set; }
+    
+    [JsonPropertyName("startTimeStr")]      public string? StartTimeStr { get; set; } // Human readable
+    [JsonPropertyName("finishTimeStr")]     public string? FinishTimeStr { get; set; } // Human readable
 
-                    <MudPaper Elevation="2" Class="p-4">
-                        <MudText Typo="Typo.subtitle1" Class="mb-2">Asset Identification</MudText>
-                        <MudGrid GutterSize="3">
-                            <MudItem xs="12" md="4">
-                                <MudTextField Label="IP Address" Value="@device.Host.IpAddress" ReadOnly="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Language" />
-                            </MudItem>
-                            <MudItem xs="12" md="4">
-                                <MudTextField Label="Hostname" Value="@device.Host.Hostname" ReadOnly="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Dns" />
-                            </MudItem>
-                            <MudItem xs="12" md="4">
-                                <MudTextField Label="NetBIOS" Value="@device.Host.NetBios" ReadOnly="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Computer" />
-                            </MudItem>
-                        </MudGrid>
-                    </MudPaper>
+    // ----------------------------------------------------------------
+    // Type & Source Info
+    // ----------------------------------------------------------------
+    [JsonPropertyName("resultType")]        public string? ResultType { get; set; }   // "scan", "agent", "lce"
+    [JsonPropertyName("resultSource")]      public string? ResultSource { get; set; } // "active", "agent", "user"
+    [JsonPropertyName("dataFormat")]        public string? DataFormat { get; set; }   // "IPv4"
 
-                    <MudPaper Elevation="2" Class="p-4">
-                        <MudStack Spacing="1" Class="mb-3">
-                            <MudText Typo="Typo.subtitle1">Vulnerability Findings</MudText>
-                            <MudText Typo="Typo.body2" Class="text-secondary">Plugin details with severity, CVSS, VPR, and evidence.</MudText>
-                        </MudStack>
+    // ----------------------------------------------------------------
+    // Capabilities
+    // ----------------------------------------------------------------
+    [JsonPropertyName("downloadAvailable")] public string? DownloadAvailable { get; set; } // "true"/"false"
+    [JsonPropertyName("canUse")]            public string? CanUse { get; set; }
+    [JsonPropertyName("canManage")]         public string? CanManage { get; set; }
 
-                        <MudTable Items="@device.Vulnerabilities" Hover="true" Dense="true" FixedHeader="true">
-                            <HeaderContent>
-                                <MudTh>Plugin ID</MudTh>
-                                <MudTh>Plugin Name</MudTh>
-                                <MudTh>Severity</MudTh>
-                                <MudTh>CVSS</MudTh>
-                                <MudTh>VPR</MudTh>
-                                <MudTh>Port</MudTh>
-                                <MudTh>Plugin Output</MudTh>
-                            </HeaderContent>
-                            <RowTemplate>
-                                <MudTd DataLabel="Plugin ID">@context.PluginId</MudTd>
-                                <MudTd DataLabel="Plugin Name">@context.PluginName</MudTd>
-                                <MudTd DataLabel="Severity">
-                                    <MudChip Color="@GetSeverityColor(context.Severity)" Variant="Variant.Filled" Size="Size.Small">@context.Severity</MudChip>
-                                </MudTd>
-                                <MudTd DataLabel="CVSS">
-                                    <MudProgressLinear Value="@(context.Cvss * 10)" Color="@GetScoreColor(context.Cvss)" Max="100" Size="Size.Small" Class="mb-1" />
-                                    <MudText Typo="Typo.caption">@context.Cvss.ToString("0.0")</MudText>
-                                </MudTd>
-                                <MudTd DataLabel="VPR">
-                                    <MudProgressLinear Value="@(context.Vpr * 10)" Color="@GetScoreColor(context.Vpr)" Max="100" Size="Size.Small" Class="mb-1" />
-                                    <MudText Typo="Typo.caption">@context.Vpr.ToString("0.0")</MudText>
-                                </MudTd>
-                                <MudTd DataLabel="Port">@context.Port</MudTd>
-                                <MudTd DataLabel="Plugin Output">
-                                    <MudText Typo="Typo.caption" Class="text-secondary">@context.PluginOutput</MudText>
-                                </MudTd>
-                            </RowTemplate>
-                        </MudTable>
-                    </MudPaper>
-
-                    <MudPaper Elevation="2" Class="p-4">
-                        <MudStack Spacing="1" Class="mb-2">
-                            <MudText Typo="Typo.subtitle1">Installed Software</MudText>
-                            <MudText Typo="Typo.body2" Class="text-secondary">Key endpoint agents detected on the asset.</MudText>
-                        </MudStack>
-                        <MudGrid GutterSize="3">
-                            @foreach (var software in device.Software)
-                            {
-                                <MudItem xs="12" md="3">
-                                    <MudCard Elevation="1">
-                                        <MudCardContent>
-                                            <MudStack Spacing="1">
-                                                <MudText Typo="Typo.subtitle2">@software.Name</MudText>
-                                                <MudText Typo="Typo.caption" Class="text-secondary">Version: @software.Version</MudText>
-                                                <MudChip Color="@(software.Installed ? Color.Success : Color.Error)" Variant="Variant.Outlined" StartIcon="@(software.Installed ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Cancel)">
-                                                    @(software.Installed ? "Installed" : "Missing")
-                                                </MudChip>
-                                            </MudStack>
-                                        </MudCardContent>
-                                    </MudCard>
-                                </MudItem>
-                            }
-                        </MudGrid>
-                    </MudPaper>
-                </MudStack>
-            </MudPaper>
-        }
-    </MudStack>
-</MudContainer>
-
-@code {
-    private string ScanName { get; } = "Quarterly External PCI - March 2024";
-
-    private IReadOnlyList<DeviceScan> Devices { get; } = new List<DeviceScan>
-    {
-        new DeviceScan
-        {
-            Host = new HostAsset
-            {
-                IpAddress = "10.15.24.92",
-                Hostname = "app-server-01.local",
-                NetBios = "APP-SVR-01"
-            },
-            Vulnerabilities = new List<VulnerabilityFinding>
-            {
-                new VulnerabilityFinding
-                {
-                    PluginId = 90782,
-                    PluginName = "OpenSSL Padding Oracle Vulnerability",
-                    Severity = "High",
-                    Cvss = 8.1,
-                    Vpr = 7.3,
-                    Port = "443/tcp",
-                    PluginOutput = "Server responds to SSLv3 padding queries; upgrade OpenSSL to a patched build."
-                },
-                new VulnerabilityFinding
-                {
-                    PluginId = 19506,
-                    PluginName = "Nessus Scan Information",
-                    Severity = "Medium",
-                    Cvss = 5.0,
-                    Vpr = 4.6,
-                    Port = "0",
-                    PluginOutput = "Scan performed with authenticated checks; audit trail recorded."
-                },
-                new VulnerabilityFinding
-                {
-                    PluginId = 11219,
-                    PluginName = "MS17-010: Security Update for Windows SMB Server",
-                    Severity = "Critical",
-                    Cvss = 9.8,
-                    Vpr = 9.5,
-                    Port = "445/tcp",
-                    PluginOutput = "SMBv1 enabled and unpatched; apply KB4013389 or later."
-                }
-            },
-            Software = new List<InstalledSoftware>
-            {
-                new InstalledSoftware { Name = "Splunk Agent", Version = "9.1.2", Installed = true },
-                new InstalledSoftware { Name = "CrowdStrike Agent", Version = "6.48.15204", Installed = true },
-                new InstalledSoftware { Name = "DSM", Version = "3.17.0", Installed = false },
-                new InstalledSoftware { Name = "BigFix", Version = "10.0.6", Installed = true }
-            }
-        },
-        new DeviceScan
-        {
-            Host = new HostAsset
-            {
-                IpAddress = "10.15.24.150",
-                Hostname = "db-server-02.local",
-                NetBios = "DB-SVR-02"
-            },
-            Vulnerabilities = new List<VulnerabilityFinding>
-            {
-                new VulnerabilityFinding
-                {
-                    PluginId = 33801,
-                    PluginName = "Oracle Database Multiple Vulnerabilities",
-                    Severity = "High",
-                    Cvss = 8.0,
-                    Vpr = 7.1,
-                    Port = "1521/tcp",
-                    PluginOutput = "Outdated Oracle CPU detected; apply the latest critical patch update."
-                },
-                new VulnerabilityFinding
-                {
-                    PluginId = 73182,
-                    PluginName = "TLS/SSL Server Supports RC4 Cipher Algorithms",
-                    Severity = "Medium",
-                    Cvss = 5.6,
-                    Vpr = 5.0,
-                    Port = "443/tcp",
-                    PluginOutput = "Server allows RC4 ciphers; disable weak ciphers in TLS configuration."
-                }
-            },
-            Software = new List<InstalledSoftware>
-            {
-                new InstalledSoftware { Name = "Splunk Agent", Version = "9.1.2", Installed = true },
-                new InstalledSoftware { Name = "CrowdStrike Agent", Version = "6.48.15204", Installed = true },
-                new InstalledSoftware { Name = "Database Agent", Version = "12.1.0.2", Installed = true },
-                new InstalledSoftware { Name = "BigFix", Version = "10.0.6", Installed = false }
-            }
-        }
-    };
-
-    private Color GetSeverityColor(string severity) => severity.ToLowerInvariant() switch
-    {
-        "critical" => Color.Error,
-        "high" => Color.Warning,
-        "medium" => Color.Info,
-        "low" => Color.Secondary,
-        _ => Color.Default
-    };
-
-    private Color GetScoreColor(double score) => score switch
-    {
-        >= 9.0 => Color.Error,
-        >= 7.0 => Color.Warning,
-        >= 4.0 => Color.Info,
-        _ => Color.Success
-    };
-
-    private sealed class HostAsset
-    {
-        public string IpAddress { get; set; } = string.Empty;
-        public string Hostname { get; set; } = string.Empty;
-        public string NetBios { get; set; } = string.Empty;
-    }
-
-    private sealed class VulnerabilityFinding
-    {
-        public int PluginId { get; set; }
-        public string PluginName { get; set; } = string.Empty;
-        public string Severity { get; set; } = string.Empty;
-        public double Cvss { get; set; }
-        public double Vpr { get; set; }
-        public string Port { get; set; } = string.Empty;
-        public string PluginOutput { get; set; } = string.Empty;
-    }
-
-    private sealed class InstalledSoftware
-    {
-        public string Name { get; set; } = string.Empty;
-        public string Version { get; set; } = string.Empty;
-        public bool Installed { get; set; }
-    }
-
-    private sealed class DeviceScan
-    {
-        public HostAsset Host { get; set; } = new HostAsset();
-        public IReadOnlyList<VulnerabilityFinding> Vulnerabilities { get; set; } = Array.Empty<VulnerabilityFinding>();
-        public IReadOnlyList<InstalledSoftware> Software { get; set; } = Array.Empty<InstalledSoftware>();
-    }
+    // Catch-all for extra fields (Tenable adds many internal fields here)
+    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
 }
