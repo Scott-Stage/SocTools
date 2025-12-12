@@ -1,7 +1,37 @@
-public sealed class TenableAnalysisResult
+public class DeviceReport
 {
-    [JsonPropertyName("totalRecords")]     public string? TotalRecords { get; set; }
+    public TenableScan? Metadata { get; set; }
+    public List<TenableVulnerability>? Vulnerabilities { get; set; }
+}
+
+public async Task<DeviceReport> GetFullDeviceReport(string scanId)
+{
+    // 2. Start both tasks (Run them in parallel for speed!)
+    //    Task 1: Get Metadata
+    var metadataTask = client.GetAsync($"{base_url}/scan/{scanId}?fields=id,name,status");
     
-    // This is where the actual data lives
-    [JsonPropertyName("matchingData")]     public List<TenableVulnerability>? MatchingData { get; set; }
-} 
+    //    Task 2: Get Vulns (using your existing logic)
+    var vulnRequest = new TenableAnalysisRequest { /* ... setup ... */ };
+    string jsonPayload = JsonSerializer.Serialize(vulnRequest);
+    using var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+    var vulnTask = client.PostAsync($"{base_url}/analysis", content);
+
+    // 3. Wait for both to finish
+    await Task.WhenAll(metadataTask, vulnTask);
+
+    // 4. Deserialize separately
+    var metaResponse = await metadataTask.Result.Content.ReadAsStringAsync();
+    var vulnResponse = await vulnTask.Result.Content.ReadAsStringAsync();
+
+    var metaObj = JsonSerializer.Deserialize<TenableScResponse<TenableScan>>(metaResponse);
+    var vulnObj = JsonSerializer.Deserialize<TenableScResponse<TenableAnalysisResult>>(vulnResponse);
+
+    // 5. Combine into your single object
+    var result = new DeviceReport
+    {
+        Metadata = metaObj?.Response,
+        Vulnerabilities = vulnObj?.Response?.Results ?? new List<TenableVulnerability>()
+    };
+
+    return result;
+}
