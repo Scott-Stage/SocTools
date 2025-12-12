@@ -1,76 +1,188 @@
-public async Task<List<TenableVulnerability>> GetVulnsAndSpecificInfos(string specificPluginIds)
-{
-    // specificPluginIds example: "19506,11936,10180"
+@page "/tenable"
+@attribute [Authorize]
 
-    // ---------------------------------------------------------
-    // Request 1: Get All Highs and Criticals
-    // ---------------------------------------------------------
-    var highCritRequest = new TenableAnalysisRequest
+<PageTitle>Tenable Scan Results</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="py-6">
+    <MudStack Spacing="3">
+        <MudPaper Elevation="3" Class="p-4">
+            <MudStack Spacing="3">
+                <MudStack Direction="Row" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                    <MudText Typo="Typo.h4" Class="font-weight-bold">Tenable Scan Results</MudText>
+                    <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Refresh">Refresh</MudButton>
+                </MudStack>
+
+                <MudPaper Elevation="2" Class="p-4">
+                    <MudText Typo="Typo.subtitle1" Class="mb-2">Asset Identification</MudText>
+                    <MudGrid GutterSize="3">
+                        <MudItem xs="12" md="4">
+                            <MudTextField Label="IP Address" Value="@Host.IpAddress" ReadOnly="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Language" />
+                        </MudItem>
+                        <MudItem xs="12" md="4">
+                            <MudTextField Label="Hostname" Value="@Host.Hostname" ReadOnly="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Dns" />
+                        </MudItem>
+                        <MudItem xs="12" md="4">
+                            <MudTextField Label="NetBIOS" Value="@Host.NetBios" ReadOnly="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Computer" />
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+
+                <MudPaper Elevation="2" Class="p-4">
+                    <MudStack Spacing="1" Class="mb-3">
+                        <MudText Typo="Typo.subtitle1">Vulnerability Findings</MudText>
+                        <MudText Typo="Typo.body2" Class="text-secondary">Plugin details with severity, CVSS, VPR, and evidence.</MudText>
+                    </MudStack>
+
+                    <MudTable Items="@Vulnerabilities" Hover="true" Dense="true" FixedHeader="true">
+                        <HeaderContent>
+                            <MudTh>Plugin ID</MudTh>
+                            <MudTh>Plugin Name</MudTh>
+                            <MudTh>Severity</MudTh>
+                            <MudTh>CVSS</MudTh>
+                            <MudTh>VPR</MudTh>
+                            <MudTh>Port</MudTh>
+                            <MudTh>Plugin Output</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Plugin ID">@context.PluginId</MudTd>
+                            <MudTd DataLabel="Plugin Name">@context.PluginName</MudTd>
+                            <MudTd DataLabel="Severity">
+                                <MudChip Color="@GetSeverityColor(context.Severity)" Variant="Variant.Filled" Size="Size.Small">@context.Severity</MudChip>
+                            </MudTd>
+                            <MudTd DataLabel="CVSS">
+                                <MudProgressLinear Value="@(context.Cvss * 10)" Color="@GetScoreColor(context.Cvss)" Max="100" Size="Size.Small" Class="mb-1" />
+                                <MudText Typo="Typo.caption">@context.Cvss.ToString("0.0")</MudText>
+                            </MudTd>
+                            <MudTd DataLabel="VPR">
+                                <MudProgressLinear Value="@(context.Vpr * 10)" Color="@GetScoreColor(context.Vpr)" Max="100" Size="Size.Small" Class="mb-1" />
+                                <MudText Typo="Typo.caption">@context.Vpr.ToString("0.0")</MudText>
+                            </MudTd>
+                            <MudTd DataLabel="Port">@context.Port</MudTd>
+                            <MudTd DataLabel="Plugin Output">
+                                <MudText Typo="Typo.caption" Class="text-secondary">@context.PluginOutput</MudText>
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </MudPaper>
+
+                <MudPaper Elevation="2" Class="p-4">
+                    <MudStack Spacing="1" Class="mb-2">
+                        <MudText Typo="Typo.subtitle1">Installed Software</MudText>
+                        <MudText Typo="Typo.body2" Class="text-secondary">Key endpoint agents detected on the asset.</MudText>
+                    </MudStack>
+                    <MudGrid GutterSize="3">
+                        @foreach (var software in Software)
+                        {
+                            <MudItem xs="12" md="3">
+                                <MudCard Elevation="1">
+                                    <MudCardContent>
+                                        <MudStack Spacing="1">
+                                            <MudText Typo="Typo.subtitle2">@software.Name</MudText>
+                                            <MudText Typo="Typo.caption" Class="text-secondary">Version: @software.Version</MudText>
+                                            <MudChip Color="@(software.Installed ? Color.Success : Color.Error)" Variant="Variant.Outlined" StartIcon="@(software.Installed ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Cancel)">
+                                                @(software.Installed ? "Installed" : "Missing")
+                                            </MudChip>
+                                        </MudStack>
+                                    </MudCardContent>
+                                </MudCard>
+                            </MudItem>
+                        }
+                    </MudGrid>
+                </MudPaper>
+            </MudStack>
+        </MudPaper>
+    </MudStack>
+</MudContainer>
+
+@code {
+    private HostAsset Host { get; } = new HostAsset()
     {
-        Type = "vuln",
-        Query = new TenableQuery
+        IpAddress = "10.15.24.92",
+        Hostname = "app-server-01.local",
+        NetBios = "APP-SVR-01"
+    };
+
+    private IReadOnlyList<VulnerabilityFinding> Vulnerabilities { get; } = new List<VulnerabilityFinding>
+    {
+        new VulnerabilityFinding
         {
-            Tool = "listvuln",
-            SourceType = "cumulative",
-            Filters = new List<TenableFilter>
-            {
-                new TenableFilter { FilterName = "severity", Operator = "=", Value = "3,4" },
-                new TenableFilter { FilterName = "pluginType", Operator = "=", Value = "active" }
-            }
+            PluginId = 90782,
+            PluginName = "OpenSSL Padding Oracle Vulnerability",
+            Severity = "High",
+            Cvss = 8.1,
+            Vpr = 7.3,
+            Port = "443/tcp",
+            PluginOutput = "Server responds to SSLv3 padding queries; upgrade OpenSSL to a patched build."
+        },
+        new VulnerabilityFinding
+        {
+            PluginId = 19506,
+            PluginName = "Nessus Scan Information",
+            Severity = "Medium",
+            Cvss = 5.0,
+            Vpr = 4.6,
+            Port = "0",
+            PluginOutput = "Scan performed with authenticated checks; audit trail recorded."
+        },
+        new VulnerabilityFinding
+        {
+            PluginId = 11219,
+            PluginName = "MS17-010: Security Update for Windows SMB Server",
+            Severity = "Critical",
+            Cvss = 9.8,
+            Vpr = 9.5,
+            Port = "445/tcp",
+            PluginOutput = "SMBv1 enabled and unpatched; apply KB4013389 or later."
         }
     };
 
-    // ---------------------------------------------------------
-    // Request 2: Get Specific Info Plugins (Ignore Severity Filter)
-    // ---------------------------------------------------------
-    var specificInfoRequest = new TenableAnalysisRequest
+    private IReadOnlyList<InstalledSoftware> Software { get; } = new List<InstalledSoftware>
     {
-        Type = "vuln",
-        Query = new TenableQuery
-        {
-            Tool = "listvuln",
-            SourceType = "cumulative",
-            Filters = new List<TenableFilter>
-            {
-                // ONLY filter by ID. This automatically includes them regardless of severity.
-                new TenableFilter 
-                { 
-                    FilterName = "pluginID", 
-                    Operator = "=", 
-                    Value = specificPluginIds 
-                }
-            }
-        }
+        new InstalledSoftware { Name = "Splunk Agent", Version = "9.1.2", Installed = true },
+        new InstalledSoftware { Name = "CrowdStrike Agent", Version = "6.48.15204", Installed = true },
+        new InstalledSoftware { Name = "DSM", Version = "3.17.0", Installed = false },
+        new InstalledSoftware { Name = "BigFix", Version = "10.0.6", Installed = true }
     };
 
-    // ---------------------------------------------------------
-    // 3. Execute Both in Parallel
-    // ---------------------------------------------------------
-    var taskHigh = FetchVulns(highCritRequest);
-    var taskInfo = FetchVulns(specificInfoRequest);
+    private Color GetSeverityColor(string severity) => severity.ToLowerInvariant() switch
+    {
+        "critical" => Color.Error,
+        "high" => Color.Warning,
+        "medium" => Color.Info,
+        "low" => Color.Secondary,
+        _ => Color.Default
+    };
 
-    await Task.WhenAll(taskHigh, taskInfo);
+    private Color GetScoreColor(double score) => score switch
+    {
+        >= 9.0 => Color.Error,
+        >= 7.0 => Color.Warning,
+        >= 4.0 => Color.Info,
+        _ => Color.Success
+    };
 
-    // 4. Merge Results (DistinctBy handles potential duplicates if logic overlaps)
-    var allVulns = taskHigh.Result
-        .Concat(taskInfo.Result)
-        // Ensure no duplicates if a plugin happened to match both criteria
-        .GroupBy(v => v.PluginId + v.IpAddress + v.Port + v.Protocol) 
-        .Select(g => g.First())
-        .ToList();
+    private sealed class HostAsset
+    {
+        public string IpAddress { get; set; } = string.Empty;
+        public string Hostname { get; set; } = string.Empty;
+        public string NetBios { get; set; } = string.Empty;
+    }
 
-    return allVulns;
-}
+    private sealed class VulnerabilityFinding
+    {
+        public int PluginId { get; set; }
+        public string PluginName { get; set; } = string.Empty;
+        public string Severity { get; set; } = string.Empty;
+        public double Cvss { get; set; }
+        public double Vpr { get; set; }
+        public string Port { get; set; } = string.Empty;
+        public string PluginOutput { get; set; } = string.Empty;
+    }
 
-// Helper method to keep code clean
-private async Task<List<TenableVulnerability>> FetchVulns(TenableAnalysisRequest req)
-{
-    string json = JsonSerializer.Serialize(req);
-    using var content = new StringContent(json, Encoding.UTF8, "application/json");
-    
-    var response = await _httpClient.PostAsync($"{base_url}/analysis", content);
-    var respString = await response.Content.ReadAsStringAsync();
-    
-    var result = JsonSerializer.Deserialize<TenableScResponse<TenableAnalysisResult>>(respString);
-    return result?.Response?.Results ?? new List<TenableVulnerability>();
+    private sealed class InstalledSoftware
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Version { get; set; } = string.Empty;
+        public bool Installed { get; set; }
+    }
 }
