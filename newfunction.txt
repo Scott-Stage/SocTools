@@ -1,65 +1,21 @@
-public sealed class TenableScanResult
-{
-    // ----------------------------------------------------------------
-    // Identity & Status
-    // ----------------------------------------------------------------
-    [JsonPropertyName("id")]                public string? Id { get; set; }
-    [JsonPropertyName("name")]              public string? Name { get; set; }
-    [JsonPropertyName("description")]       public string? Description { get; set; }
-    
-    // Status: "Completed", "Running", "Partial", "Failed", "Pending"
-    [JsonPropertyName("status")]            public string? Status { get; set; }
-    
-    // Details: Usually "Finished in 123 seconds" or error text
-    [JsonPropertyName("details")]           public string? Details { get; set; }
+    // 1. Map the raw API field (String)
+    [JsonPropertyName("scanDuration")]
+    public string? ScanDurationString { get; set; }
 
-    // ----------------------------------------------------------------
-    // Linking (The "Parent" Objects)
-    // ----------------------------------------------------------------
-    // The "Task" that created this result (e.g., Scan ID 9)
-    [JsonPropertyName("scan")]              public TenableEntityRef? ScanDefinition { get; set; }
-    
-    // The Repository where data is stored
-    [JsonPropertyName("repository")]        public TenableEntityRef? Repository { get; set; }
-    
-    // Who started it
-    [JsonPropertyName("initiator")]         public TenableUserRef? Initiator { get; set; }
-    [JsonPropertyName("owner")]             public TenableUserRef? Owner { get; set; }
-    [JsonPropertyName("ownerGroup")]        public TenableEntityRef? OwnerGroup { get; set; }
+    // 2. Helper property to get actual TimeSpan
+    [JsonIgnore]
+    public TimeSpan Duration
+    {
+        get
+        {
+            if (long.TryParse(ScanDurationString, out long seconds))
+            {
+                return TimeSpan.FromSeconds(seconds);
+            }
+            return TimeSpan.Zero;
+        }
+    }
 
-    // ----------------------------------------------------------------
-    // Timestamps (Unix Epoch Strings)
-    // ----------------------------------------------------------------
-    [JsonPropertyName("startTime")]         public string? StartTime { get; set; }
-    [JsonPropertyName("finishTime")]        public string? FinishTime { get; set; }
-    
-    [JsonPropertyName("importStart")]       public string? ImportStart { get; set; }
-    [JsonPropertyName("importFinish")]      public string? ImportFinish { get; set; }
-    [JsonPropertyName("importStatus")]      public string? ImportStatus { get; set; } // "Finished"
-
-    // ----------------------------------------------------------------
-    // Statistics / Metrics
-    // ----------------------------------------------------------------
-    [JsonPropertyName("totalIPs")]          public string? TotalIPs { get; set; }
-    [JsonPropertyName("scannedIPs")]        public string? ScannedIPs { get; set; }
-    
-    [JsonPropertyName("startTimeStr")]      public string? StartTimeStr { get; set; } // Human readable
-    [JsonPropertyName("finishTimeStr")]     public string? FinishTimeStr { get; set; } // Human readable
-
-    // ----------------------------------------------------------------
-    // Type & Source Info
-    // ----------------------------------------------------------------
-    [JsonPropertyName("resultType")]        public string? ResultType { get; set; }   // "scan", "agent", "lce"
-    [JsonPropertyName("resultSource")]      public string? ResultSource { get; set; } // "active", "agent", "user"
-    [JsonPropertyName("dataFormat")]        public string? DataFormat { get; set; }   // "IPv4"
-
-    // ----------------------------------------------------------------
-    // Capabilities
-    // ----------------------------------------------------------------
-    [JsonPropertyName("downloadAvailable")] public string? DownloadAvailable { get; set; } // "true"/"false"
-    [JsonPropertyName("canUse")]            public string? CanUse { get; set; }
-    [JsonPropertyName("canManage")]         public string? CanManage { get; set; }
-
-    // Catch-all for extra fields (Tenable adds many internal fields here)
-    [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; set; }
-}
+    // 3. Helper to get pretty text (e.g., "00:02:34")
+    [JsonIgnore]
+    public string DurationFormatted => Duration.ToString(@"hh\:mm\:ss");
