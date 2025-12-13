@@ -1,20 +1,3 @@
-Based on the text sample provided in the screenshot, the data follows a repeating pattern where the software name is followed by a [version X.X.X] tag, and often followed by an [installed on YYYY/MM/DD] tag.
-The most robust way to parse this is using Regular Expressions (Regex).
-Here is a complete C# solution containing a Data Model, a Service helper, and a usage example.
-1. The Data Model
-Simple class to hold your parsed results.
-code
-C#
-public class DetectedSoftware
-{
-    public string Name { get; set; } = string.Empty;
-    public string Version { get; set; } = string.Empty;
-    public string RawText { get; set; } = string.Empty; // Useful for debugging
-}
-2. The Parsing Logic
-This logic uses a Regex designed to look for the [version ...] anchor. It captures the text immediately preceding that anchor as the "Name", stopping when it hits the closing bracket ] of the previous entry (from the [installed on...] tag).
-code
-C#
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -22,96 +5,71 @@ using System.Text.RegularExpressions;
 
 public static class SoftwareParser
 {
-    public static List<DetectedSoftware> ParseByKeywords(string rawInput, List<string> keywords)
+    public static List<DetectedSoftware> CheckForSoftware(string rawInput, List<string> keywords)
     {
-        var results = new List<DetectedSoftware>();
+        var finalResults = new List<DetectedSoftware>();
+
+        // ---------------------------------------------------------
+        // Step 1: Parse ALL software from the raw text into a temporary list
+        // ---------------------------------------------------------
+        var allInstalledSoftware = new List<DetectedSoftware>();
         
-        if (string.IsNullOrWhiteSpace(rawInput)) return results;
-
-        // ---------------------------------------------------------
-        // The Regex Explanation:
-        // (?:\]\s*|^)      -> Non-capturing group: Look for a closing bracket ']' (from previous entry) 
-        //                     OR the Start of the string (^). This defines the start of our entry.
-        // (?<name>[^\[]+?) -> Capture Group 'name': Match any character that is NOT an open bracket '[', 
-        //                     lazy match (take as little as possible).
-        // \s*              -> Allow optional whitespace.
-        // \[version\s+     -> Literal match for "[version " (This is our anchor).
-        // (?<ver>[^\]]+)   -> Capture Group 'ver': Match everything inside the brackets until the closing ']'.
-        // ---------------------------------------------------------
-        string pattern = @"(?:\]\s*|^)(?<name>[^\[]+?)\s*\[version\s+(?<ver>[^\]]+)\]";
-
-        // Find all matches in the raw text
-        var matches = Regex.Matches(rawInput, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
-
-        foreach (Match match in matches)
+        if (!string.IsNullOrWhiteSpace(rawInput))
         {
-            string softwareName = match.Groups["name"].Value.Trim();
-            string version = match.Groups["ver"].Value.Trim();
+            // Same robust Regex as before
+            string pattern = @"(?:\]\s*|^)(?<name>[^\[]+?)\s*\[version\s+(?<ver>[^\]]+)\]";
+            var matches = Regex.Matches(rawInput, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
-            // Check if this software contains ANY of the keywords
-            // We use Case-Insensitive checking
-            bool isMatch = keywords.Any(k => 
-                softwareName.Contains(k, StringComparison.OrdinalIgnoreCase));
-
-            if (isMatch)
+            foreach (Match match in matches)
             {
-                results.Add(new DetectedSoftware
+                allInstalledSoftware.Add(new DetectedSoftware
                 {
-                    Name = softwareName,
-                    Version = version,
-                    RawText = match.Value // Optional: store the full match string
+                    Name = match.Groups["name"].Value.Trim(),
+                    Version = match.Groups["ver"].Value.Trim(),
+                    Installed = true
                 });
             }
         }
 
-        return results;
-    }
-}
-3. Usage Example
-Here is how you would use it with the data from your screenshot.
-code
-C#
-public void TestParser()
-{
-    // 1. The Raw Text (Simulated from your screenshot)
-    string rawPluginOutput = @"The following software are installed on the remote host : Apache Tomcat 10.1 Tomcat10 (remove only) [version 10.1.48] Microsoft Edge [version 143.0.3650.66] [installed on 2025/12/06] Microsoft.NET.Workload.Emscripten.net6.Manifest (x64) [version 64.88.42371] [installed on 2025/11/18] UniversalForwarder [version 9.4.4.0] [installed on 2025/10/09] CrowdStrike Windows Sensor [version 7.28.20008.0] [installed on 2025/12/08]";
-
-    // 2. Define Keywords we care about
-    var myKeywords = new List<string> 
-    { 
-        "CrowdStrike", 
-        "Tomcat", 
-        "UniversalForwarder",
-        "Microsoft Edge"
-    };
-
-    // 3. Parse
-    List<DetectedSoftware> foundSoftware = SoftwareParser.ParseByKeywords(rawPluginOutput, myKeywords);
-
-    // 4. Output Results
-    Console.WriteLine($"Found {foundSoftware.Count} matches:");
-    foreach (var app in foundSoftware)
-    {
-        Console.WriteLine($"Product: {app.Name}");
-        Console.WriteLine($"Version: {app.Version}");
-        Console.WriteLine("-----------------------------");
-    }
-}
-4. Integration with your Tenable Data Model
-If you are iterating through your TenableVulnerability objects, you would use it like this:
-code
-C#
-foreach (var vuln in response.Results)
-{
-    // Only parse Plugin 20811 (Windows Software Enumeration) or 22869 (SSH Software Enumeration)
-    if (vuln.PluginId == "20811" && !string.IsNullOrEmpty(vuln.PluginText))
-    {
-        var keywords = new List<string> { "CrowdStrike", "Splunk", "Tanium" };
-        var matches = SoftwareParser.ParseByKeywords(vuln.PluginText, keywords);
-
-        foreach(var match in matches)
+        // ---------------------------------------------------------
+        // Step 2: Loop through keywords to determine Found vs Not Found
+        // ---------------------------------------------------------
+        foreach (var keyword in keywords)
         {
-             Console.WriteLine($"Host {vuln.IpAddress} has {match.Name} v{match.Version}");
+            // Find all matches for this specific keyword
+            var matches = allInstalledSoftware
+                .Where(s => s.Name.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (matches.Any())
+            {
+                // CASE: FOUND
+                // We might match multiple items (e.g. "Java" matches "Java 8" and "Java Updater")
+                foreach (var match in matches)
+                {
+                    finalResults.Add(new DetectedSoftware
+                    {
+                        Name = match.Name,       // The actual name found in text
+                        Version = match.Version,
+                        Installed = true,
+                        SearchTerm = keyword     // Record that this was found via this keyword
+                    });
+                }
+            }
+            else
+            {
+                // CASE: NOT FOUND
+                // Add a single entry indicating this keyword is missing
+                finalResults.Add(new DetectedSoftware
+                {
+                    Name = keyword,              // Use the keyword as the name
+                    Version = "N/A",
+                    Installed = false,
+                    SearchTerm = keyword
+                });
+            }
         }
+
+        return finalResults;
     }
 }
