@@ -1,75 +1,170 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text.RegularExpressions;
-
-public static class SoftwareParser
+namespace SoftwareInventory
 {
-    public static List<DetectedSoftware> CheckForSoftware(string rawInput, List<string> keywords)
+    // The specific match found in the text
+    public class DetectedInstance
     {
-        var finalResults = new List<DetectedSoftware>();
+        public string MatchedName { get; set; } = string.Empty;
+        public string Version { get; set; } = string.Empty;
+        public string KeywordUsed { get; set; } = string.Empty;
+    }
 
-        // ---------------------------------------------------------
-        // Step 1: Parse ALL software from the raw text into a temporary list
-        // ---------------------------------------------------------
-        var allInstalledSoftware = new List<DetectedSoftware>();
+    // The high-level Wrapper (e.g., "Splunk")
+    public class ProductWrapper
+    {
+        public string FamilyName { get; set; } = string.Empty; // e.g. "CrowdStrike"
+        public bool Installed { get; set; } = false;
         
-        if (!string.IsNullOrWhiteSpace(rawInput))
-        {
-            // Same robust Regex as before
-            string pattern = @"(?:\]\s*|^)(?<name>[^\[]+?)\s*\[version\s+(?<ver>[^\]]+)\]";
-            var matches = Regex.Matches(rawInput, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        // If multiple versions found, this returns them comma-separated (e.g. "9.4.4, 8.1.0")
+        // If not found, returns "N/A"
+        public string VersionSummary => Installed && Instances.Any() 
+            ? string.Join(", ", Instances.Select(i => i.Version).Distinct()) 
+            : "N/A";
 
-            foreach (Match match in matches)
-            {
-                allInstalledSoftware.Add(new DetectedSoftware
-                {
-                    Name = match.Groups["name"].Value.Trim(),
-                    Version = match.Groups["ver"].Value.Trim(),
-                    Installed = true
-                });
-            }
+        // List of all matches (in case multiple components are installed)
+        public List<DetectedInstance> Instances { get; set; } = new List<DetectedInstance>();
+    }
+
+    // Configuration object to define rules
+    public class ProductDefinition
+    {
+        public string FamilyName { get; set; }
+        public List<string> MatchKeywords { get; set; }
+
+        public ProductDefinition(string name, params string[] keywords)
+        {
+            FamilyName = name;
+            MatchKeywords = new List<string>(keywords);
         }
-
-        // ---------------------------------------------------------
-        // Step 2: Loop through keywords to determine Found vs Not Found
-        // ---------------------------------------------------------
-        foreach (var keyword in keywords)
+    }
+}
+2. The Parser Logic
+This Service does three things:
+Accepts the Raw Text.
+Parses every piece of software into a temporary list.
+Loops through your Definitions (Splunk, BigFix, etc.) to group the findings into the Wrappers.
+code
+C#
+namespace SoftwareInventory
+{
+    public static class SoftwareParser
+    {
+        public static List<ProductWrapper> AnalyzeSoftware(string rawInput, List<ProductDefinition> definitions)
         {
-            // Find all matches for this specific keyword
-            var matches = allInstalledSoftware
-                .Where(s => s.Name.Contains(keyword, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            var results = new List<ProductWrapper>();
 
-            if (matches.Any())
+            // ---------------------------------------------------------
+            // 1. Parse Raw Text into a Flat List
+            // ---------------------------------------------------------
+            var allSoftware = new List<(string Name, string Version)>();
+
+            if (!string.IsNullOrWhiteSpace(rawInput))
             {
-                // CASE: FOUND
-                // We might match multiple items (e.g. "Java" matches "Java 8" and "Java Updater")
-                foreach (var match in matches)
+                // Regex to capture "Name [version X.X.X]"
+                string pattern = @"(?:\]\s*|^)(?<name>[^\[]+?)\s*\[version\s+(?<ver>[^\]]+)\]";
+                var matches = Regex.Matches(rawInput, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+                foreach (Match match in matches)
                 {
-                    finalResults.Add(new DetectedSoftware
-                    {
-                        Name = match.Name,       // The actual name found in text
-                        Version = match.Version,
-                        Installed = true,
-                        SearchTerm = keyword     // Record that this was found via this keyword
-                    });
+                    allSoftware.Add((
+                        Name: match.Groups["name"].Value.Trim(),
+                        Version: match.Groups["ver"].Value.Trim()
+                    ));
                 }
             }
-            else
+
+            // ---------------------------------------------------------
+            // 2. Group into Wrappers based on Definitions
+            // ---------------------------------------------------------
+            foreach (var def in definitions)
             {
-                // CASE: NOT FOUND
-                // Add a single entry indicating this keyword is missing
-                finalResults.Add(new DetectedSoftware
+                var wrapper = new ProductWrapper
                 {
-                    Name = keyword,              // Use the keyword as the name
-                    Version = "N/A",
-                    Installed = false,
-                    SearchTerm = keyword
-                });
+                    FamilyName = def.FamilyName,
+                    Instances = new List<DetectedInstance>()
+                };
+
+                // Check against all raw software found
+                foreach (var sw in allSoftware)
+                {
+                    // Check if this software name contains ANY of the keywords for this wrapper
+                    var matchedKeyword = def.MatchKeywords.FirstOrDefault(k => 
+                        sw.Name.Contains(k, StringComparison.OrdinalIgnoreCase));
+
+                    if (matchedKeyword != null)
+                    {
+                        wrapper.Instances.Add(new DetectedInstance
+                        {
+                            MatchedName = sw.Name,
+                            Version = sw.Version,
+                            KeywordUsed = matchedKeyword
+                        });
+                    }
+                }
+
+                // Set final status based on whether we found anything
+                wrapper.Installed = wrapper.Instances.Any();
+
+                results.Add(wrapper);
+            }
+
+            return results;
+        }
+    }
+}
+3. Usage Implementation
+Here is how you set up the definitions exactly as you requested and run the parser.
+code
+C#
+using System;
+using System.Collections.Generic;
+using SoftwareInventory;
+
+public class Program
+{
+    public static void Main()
+    {
+        // 1. Define your Wrappers and Keywords
+        var myDefinitions = new List<ProductDefinition>
+        {
+            new ProductDefinition("CrowdStrike", "CrowdStrike"),
+            new ProductDefinition("Splunk",      "Splunk", "UniversalForwarder"),
+            new ProductDefinition("DSM",         "DSM", "Deep Security"),
+            new ProductDefinition("Imperva",     "Imperva"),
+            new ProductDefinition("BigFix",      "BigFix", "Bes", "IBM BigFix")
+        };
+
+        // 2. The Raw Input (Simulated from your image)
+        string rawText = @"The following software are installed... 
+Apache Tomcat 10.1 [version 10.1.48] 
+BigFix Client [version 11.0.4.60] [installed on 2025/10/09] 
+CrowdStrike Windows Sensor [version 7.28.20008.0] [installed on 2025/12/08] 
+UniversalForwarder [version 9.4.4.0] [installed on 2025/10/09] 
+CA DSM Agent + Asset Management plugin [version 14.0.1000.194]";
+
+        // 3. Run Analysis
+        List<ProductWrapper> report = SoftwareParser.AnalyzeSoftware(rawText, myDefinitions);
+
+        // 4. Print Results
+        Console.WriteLine("{0,-15} | {1,-10} | {2,-15} | {3}", "Wrapper", "Installed", "Version", "Details");
+        Console.WriteLine(new string('-', 100));
+
+        foreach (var product in report)
+        {
+            Console.WriteLine("{0,-15} | {1,-10} | {2,-15} | {3}", 
+                product.FamilyName, 
+                product.Installed, 
+                product.VersionSummary,
+                product.Installed ? $"{product.Instances.Count} instance(s) found" : "");
+
+            // Optional: Print detail rows
+            if (product.Installed)
+            {
+                foreach(var inst in product.Instances)
+                {
+                     Console.WriteLine($"   -> Match: '{inst.MatchedName}' (Key: {inst.KeywordUsed})");
+                }
+                Console.WriteLine(); // Spacing
             }
         }
-
-        return finalResults;
     }
 }
