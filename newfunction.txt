@@ -1,30 +1,33 @@
-namespace SoftwareInventory
-{
-    // The specific match found in the text
-    public class DetectedInstance
+    // Level 3: The lowest level (The specific match found)
+    public class DetectedComponent
     {
-        public string MatchedName { get; set; } = string.Empty;
-        public string Version { get; set; } = string.Empty;
-        public string KeywordUsed { get; set; } = string.Empty;
+        public string MatchedName { get; set; } = string.Empty; // e.g., "UniversalForwarder"
+        public string Version { get; set; } = string.Empty;     // e.g., "9.4.4.0"
+        public string KeywordUsed { get; set; } = string.Empty; // e.g., "UniversalForwarder"
     }
 
-    // The high-level Wrapper (e.g., "Splunk")
+    // Level 1: The high-level Wrapper (e.g., "Splunk")
     public class ProductWrapper
     {
-        public string FamilyName { get; set; } = string.Empty; // e.g. "CrowdStrike"
+        public string FamilyName { get; set; } = string.Empty; 
         public bool Installed { get; set; } = false;
-        
-        // If multiple versions found, this returns them comma-separated (e.g. "9.4.4, 8.1.0")
-        // If not found, returns "N/A"
-        public string VersionSummary => Installed && Instances.Any() 
-            ? string.Join(", ", Instances.Select(i => i.Version).Distinct()) 
-            : "N/A";
 
-        // List of all matches (in case multiple components are installed)
-        public List<DetectedInstance> Instances { get; set; } = new List<DetectedInstance>();
+        // This property now holds the grouped list of components found for this family
+        public List<DetectedComponent> Components { get; set; } = new List<DetectedComponent>();
+
+        // Helper to get a clean summary string for the UI
+        public string VersionSummary
+        {
+            get 
+            {
+                if (!Installed || !Components.Any()) return "N/A";
+                // Returns unique versions found, e.g., "9.4.4.0" or "9.4.4.0, 8.2.1"
+                return string.Join(", ", Components.Select(c => c.Version).Distinct());
+            }
+        }
     }
 
-    // Configuration object to define rules
+    // Configuration object (Unchanged)
     public class ProductDefinition
     {
         public string FamilyName { get; set; }
@@ -36,30 +39,17 @@ namespace SoftwareInventory
             MatchKeywords = new List<string>(keywords);
         }
     }
-}
-2. The Parser Logic
-This Service does three things:
-Accepts the Raw Text.
-Parses every piece of software into a temporary list.
-Loops through your Definitions (Splunk, BigFix, etc.) to group the findings into the Wrappers.
-code
-C#
-namespace SoftwareInventory
-{
     public static class SoftwareParser
     {
         public static List<ProductWrapper> AnalyzeSoftware(string rawInput, List<ProductDefinition> definitions)
         {
             var results = new List<ProductWrapper>();
 
-            // ---------------------------------------------------------
-            // 1. Parse Raw Text into a Flat List
-            // ---------------------------------------------------------
+            // 1. Parse Raw Text into a Flat List (Unchanged)
             var allSoftware = new List<(string Name, string Version)>();
 
             if (!string.IsNullOrWhiteSpace(rawInput))
             {
-                // Regex to capture "Name [version X.X.X]"
                 string pattern = @"(?:\]\s*|^)(?<name>[^\[]+?)\s*\[version\s+(?<ver>[^\]]+)\]";
                 var matches = Regex.Matches(rawInput, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
 
@@ -72,27 +62,25 @@ namespace SoftwareInventory
                 }
             }
 
-            // ---------------------------------------------------------
-            // 2. Group into Wrappers based on Definitions
-            // ---------------------------------------------------------
+            // 2. Group into Wrappers
             foreach (var def in definitions)
             {
                 var wrapper = new ProductWrapper
                 {
                     FamilyName = def.FamilyName,
-                    Instances = new List<DetectedInstance>()
+                    Components = new List<DetectedComponent>()
                 };
 
                 // Check against all raw software found
                 foreach (var sw in allSoftware)
                 {
-                    // Check if this software name contains ANY of the keywords for this wrapper
                     var matchedKeyword = def.MatchKeywords.FirstOrDefault(k => 
                         sw.Name.Contains(k, StringComparison.OrdinalIgnoreCase));
 
                     if (matchedKeyword != null)
                     {
-                        wrapper.Instances.Add(new DetectedInstance
+                        // Add the component directly to the wrapper
+                        wrapper.Components.Add(new DetectedComponent
                         {
                             MatchedName = sw.Name,
                             Version = sw.Version,
@@ -101,70 +89,10 @@ namespace SoftwareInventory
                     }
                 }
 
-                // Set final status based on whether we found anything
-                wrapper.Installed = wrapper.Instances.Any();
-
+                wrapper.Installed = wrapper.Components.Any();
                 results.Add(wrapper);
             }
 
             return results;
         }
     }
-}
-3. Usage Implementation
-Here is how you set up the definitions exactly as you requested and run the parser.
-code
-C#
-using System;
-using System.Collections.Generic;
-using SoftwareInventory;
-
-public class Program
-{
-    public static void Main()
-    {
-        // 1. Define your Wrappers and Keywords
-        var myDefinitions = new List<ProductDefinition>
-        {
-            new ProductDefinition("CrowdStrike", "CrowdStrike"),
-            new ProductDefinition("Splunk",      "Splunk", "UniversalForwarder"),
-            new ProductDefinition("DSM",         "DSM", "Deep Security"),
-            new ProductDefinition("Imperva",     "Imperva"),
-            new ProductDefinition("BigFix",      "BigFix", "Bes", "IBM BigFix")
-        };
-
-        // 2. The Raw Input (Simulated from your image)
-        string rawText = @"The following software are installed... 
-Apache Tomcat 10.1 [version 10.1.48] 
-BigFix Client [version 11.0.4.60] [installed on 2025/10/09] 
-CrowdStrike Windows Sensor [version 7.28.20008.0] [installed on 2025/12/08] 
-UniversalForwarder [version 9.4.4.0] [installed on 2025/10/09] 
-CA DSM Agent + Asset Management plugin [version 14.0.1000.194]";
-
-        // 3. Run Analysis
-        List<ProductWrapper> report = SoftwareParser.AnalyzeSoftware(rawText, myDefinitions);
-
-        // 4. Print Results
-        Console.WriteLine("{0,-15} | {1,-10} | {2,-15} | {3}", "Wrapper", "Installed", "Version", "Details");
-        Console.WriteLine(new string('-', 100));
-
-        foreach (var product in report)
-        {
-            Console.WriteLine("{0,-15} | {1,-10} | {2,-15} | {3}", 
-                product.FamilyName, 
-                product.Installed, 
-                product.VersionSummary,
-                product.Installed ? $"{product.Instances.Count} instance(s) found" : "");
-
-            // Optional: Print detail rows
-            if (product.Installed)
-            {
-                foreach(var inst in product.Instances)
-                {
-                     Console.WriteLine($"   -> Match: '{inst.MatchedName}' (Key: {inst.KeywordUsed})");
-                }
-                Console.WriteLine(); // Spacing
-            }
-        }
-    }
-}
