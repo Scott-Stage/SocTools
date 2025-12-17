@@ -1,68 +1,33 @@
-    // Level 3: The lowest level (The specific match found)
-    public class DetectedComponent
-    {
-        public string MatchedName { get; set; } = string.Empty; // e.g., "UniversalForwarder"
-        public string Version { get; set; } = string.Empty;     // e.g., "9.4.4.0"
-        public string KeywordUsed { get; set; } = string.Empty; // e.g., "UniversalForwarder"
-    }
-
-    // Level 1: The high-level Wrapper (e.g., "Splunk")
-    public class ProductWrapper
-    {
-        public string FamilyName { get; set; } = string.Empty; 
-        public bool Installed { get; set; } = false;
-
-        // This property now holds the grouped list of components found for this family
-        public List<DetectedComponent> Components { get; set; } = new List<DetectedComponent>();
-
-        // Helper to get a clean summary string for the UI
-        public string VersionSummary
-        {
-            get 
-            {
-                if (!Installed || !Components.Any()) return "N/A";
-                // Returns unique versions found, e.g., "9.4.4.0" or "9.4.4.0, 8.2.1"
-                return string.Join(", ", Components.Select(c => c.Version).Distinct());
-            }
-        }
-    }
-
-    // Configuration object (Unchanged)
-    public class ProductDefinition
-    {
-        public string FamilyName { get; set; }
-        public List<string> MatchKeywords { get; set; }
-
-        public ProductDefinition(string name, params string[] keywords)
-        {
-            FamilyName = name;
-            MatchKeywords = new List<string>(keywords);
-        }
-    }
+namespace SoftwareInventory
+{
     public static class SoftwareParser
     {
         public static List<ProductWrapper> AnalyzeSoftware(string rawInput, List<ProductDefinition> definitions)
         {
             var results = new List<ProductWrapper>();
-
-            // 1. Parse Raw Text into a Flat List (Unchanged)
             var allSoftware = new List<(string Name, string Version)>();
 
             if (!string.IsNullOrWhiteSpace(rawInput))
             {
-                string pattern = @"(?:\]\s*|^)(?<name>[^\[]+?)\s*\[version\s+(?<ver>[^\]]+)\]";
-                var matches = Regex.Matches(rawInput, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
-
-                foreach (Match match in matches)
+                // ---------------------------------------------------------
+                // 1. AUTO-DETECT MODE
+                // ---------------------------------------------------------
+                // Plugin 20811 (Windows) almost always uses the "[version ...]" tag.
+                // Plugin 22869 (Linux) usually outputs raw package strings line-by-line.
+                
+                if (rawInput.Contains("[version ", StringComparison.OrdinalIgnoreCase))
                 {
-                    allSoftware.Add((
-                        Name: match.Groups["name"].Value.Trim(),
-                        Version: match.Groups["ver"].Value.Trim()
-                    ));
+                    allSoftware = ParseWindowsStyle(rawInput);
+                }
+                else
+                {
+                    allSoftware = ParseLinuxStyle(rawInput);
                 }
             }
 
-            // 2. Group into Wrappers
+            // ---------------------------------------------------------
+            // 2. GROUPING LOGIC (Shared for both OSs)
+            // ---------------------------------------------------------
             foreach (var def in definitions)
             {
                 var wrapper = new ProductWrapper
@@ -71,15 +36,13 @@
                     Components = new List<DetectedComponent>()
                 };
 
-                // Check against all raw software found
                 foreach (var sw in allSoftware)
                 {
-                    var matchedKeyword = def.MatchKeywords.FirstOrDefault(k => 
+                    var matchedKeyword = def.MatchKeywords.FirstOrDefault(k =>
                         sw.Name.Contains(k, StringComparison.OrdinalIgnoreCase));
 
                     if (matchedKeyword != null)
                     {
-                        // Add the component directly to the wrapper
                         wrapper.Components.Add(new DetectedComponent
                         {
                             MatchedName = sw.Name,
@@ -95,4 +58,67 @@
 
             return results;
         }
+
+        // ---------------------------------------------------------
+        // PARSING STRATEGY: WINDOWS
+        // ---------------------------------------------------------
+        private static List<(string Name, string Version)> ParseWindowsStyle(string input)
+        {
+            var list = new List<(string Name, string Version)>();
+            // Regex for: Name [version 1.2.3]
+            string pattern = @"(?:\]\s*|^)(?<name>[^\[]+?)\s*\[version\s+(?<ver>[^\]]+)\]";
+            var matches = Regex.Matches(input, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+            foreach (Match match in matches)
+            {
+                list.Add((
+                    Name: match.Groups["name"].Value.Trim(),
+                    Version: match.Groups["ver"].Value.Trim()
+                ));
+            }
+            return list;
+        }
+
+        // ---------------------------------------------------------
+        // PARSING STRATEGY: LINUX (RPM/DEB Strings)
+        // ---------------------------------------------------------
+        private static List<(string Name, string Version)> ParseLinuxStyle(string input)
+        {
+            var list = new List<(string Name, string Version)>();
+            
+            // Read line by line
+            using (var reader = new StringReader(input))
+            {
+                string? line;
+                while ((line = reader.ReadLine()) != null)
+                {
+                    line = line.Trim();
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    if (line.StartsWith("The following packages", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    // LINUX HEURISTIC:
+                    // Most Linux packages (RPM) follow the format: name-version-release.arch
+                    // We look for the FIRST hyphen that is followed immediately by a digit.
+                    // Example: "splunkforwarder-9.1.0" -> Split at hyphen before '9'
+                    
+                    // Regex: Start of string, capture Name (non-greedy), Match hyphen, Capture Version (Digit followed by anything)
+                    var match = Regex.Match(line, @"^(?<name>.*?)-(?<ver>\d.*)$");
+
+                    if (match.Success)
+                    {
+                        list.Add((
+                            Name: match.Groups["name"].Value.Trim(),
+                            Version: match.Groups["ver"].Value.Trim()
+                        ));
+                    }
+                    else
+                    {
+                        // Fallback: If we can't parse version (e.g. "python-devel"), treat whole line as name
+                        list.Add((Name: line, Version: "Unknown"));
+                    }
+                }
+            }
+            return list;
+        }
     }
+}
