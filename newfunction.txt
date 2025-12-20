@@ -1,1 +1,252 @@
-?$filter=displayName eq 'Project Apollo Investigation'
+namespace Microsoft.Graph.Models.Security
+{
+    // ==========================================
+    // 1. E-Discovery Case
+    // ==========================================
+    public class EdiscoveryCase : Case
+    {
+        // --- Properties ---
+        [JsonPropertyName("closedBy")]
+        public IdentitySet? ClosedBy { get; set; }
+
+        [JsonPropertyName("closedDateTime")]
+        public DateTimeOffset? ClosedDateTime { get; set; }
+
+        // --- Relationships (Navigation Properties) ---
+        
+        // Custodians associated with the case
+        [JsonPropertyName("custodians")]
+        public List<EdiscoveryCustodian>? Custodians { get; set; }
+
+        // Legal hold policies applied to the case
+        [JsonPropertyName("legalHolds")]
+        public List<EdiscoveryHoldPolicy>? LegalHolds { get; set; }
+
+        // Data sources not associated with a specific custodian (e.g. SharedPoints)
+        [JsonPropertyName("noncustodialDataSources")]
+        public List<EdiscoveryNoncustodialDataSource>? NoncustodialDataSources { get; set; }
+
+        // Long-running operations (indexes, exports, etc.) linked to the case
+        [JsonPropertyName("operations")]
+        public List<CaseOperation>? Operations { get; set; }
+
+        // Review sets where data is collected and analyzed
+        [JsonPropertyName("reviewSets")]
+        public List<EdiscoveryReviewSet>? ReviewSets { get; set; }
+
+        // Searches defined within this case
+        [JsonPropertyName("searches")]
+        public List<EdiscoverySearch>? Searches { get; set; }
+
+        // Global settings for the case (OCR, redundancy, etc.)
+        [JsonPropertyName("settings")]
+        public EdiscoveryCaseSettings? Settings { get; set; }
+
+        // Tags that can be applied to documents in review sets
+        [JsonPropertyName("tags")]
+        public List<EdiscoveryReviewTag>? Tags { get; set; }
+    }
+
+    // ==========================================
+    // 2. E-Discovery Search
+    // ==========================================
+    public class EdiscoverySearch : Search
+    {
+        // --- Properties ---
+        [JsonPropertyName("dataSourceScopes")]
+        public DataSourceScopes? DataSourceScopes { get; set; }
+
+        // --- Relationships (Navigation Properties) ---
+
+        // Sources manually added to the search (not custodians)
+        [JsonPropertyName("additionalSources")]
+        public List<DataSource>? AdditionalSources { get; set; }
+
+        // Custodian sources (mailboxes/sites) included in the search
+        [JsonPropertyName("custodianSources")]
+        public List<DataSource>? CustodianSources { get; set; }
+
+        // Non-custodial sources included in the search
+        [JsonPropertyName("noncustodialSources")]
+        public List<EdiscoveryNoncustodialDataSource>? NoncustodialSources { get; set; }
+
+        // Reference to the last estimate operation (statistics) run for this search
+        [JsonPropertyName("lastEstimateStatisticsOperation")]
+        public EdiscoveryEstimateOperation? LastEstimateStatisticsOperation { get; set; }
+    }
+
+    // ==========================================
+    // 3. Base Classes
+    // ==========================================
+    public class Case : Entity
+    {
+        [JsonPropertyName("displayName")]
+        public string? DisplayName { get; set; }
+
+        [JsonPropertyName("description")]
+        public string? Description { get; set; }
+
+        [JsonPropertyName("createdDateTime")]
+        public DateTimeOffset? CreatedDateTime { get; set; }
+
+        [JsonPropertyName("lastModifiedDateTime")]
+        public DateTimeOffset? LastModifiedDateTime { get; set; }
+
+        [JsonPropertyName("externalId")]
+        public string? ExternalId { get; set; }
+
+        [JsonPropertyName("status")]
+        public CaseStatus? Status { get; set; }
+
+        [JsonPropertyName("lastModifiedBy")]
+        public IdentitySet? LastModifiedBy { get; set; }
+    }
+
+    public class Search : Entity
+    {
+        [JsonPropertyName("displayName")]
+        public string? DisplayName { get; set; }
+
+        [JsonPropertyName("description")]
+        public string? Description { get; set; }
+
+        [JsonPropertyName("contentQuery")]
+        public string? ContentQuery { get; set; }
+
+        [JsonPropertyName("createdDateTime")]
+        public DateTimeOffset? CreatedDateTime { get; set; }
+
+        [JsonPropertyName("lastModifiedDateTime")]
+        public DateTimeOffset? LastModifiedDateTime { get; set; }
+
+        [JsonPropertyName("createdBy")]
+        public IdentitySet? CreatedBy { get; set; }
+
+        [JsonPropertyName("lastModifiedBy")]
+        public IdentitySet? LastModifiedBy { get; set; }
+    }
+
+    public class Entity
+    {
+        [JsonPropertyName("id")]
+        public string? Id { get; set; }
+    }
+
+    // ==========================================
+    // 4. Related Entity Placeholders
+    // ==========================================
+
+    // Represents a person of interest (Custodian)
+    public class EdiscoveryCustodian : DataSourceContainer { }
+
+    // Represents a Legal Hold Policy
+    public class EdiscoveryHoldPolicy : Entity 
+    {
+        [JsonPropertyName("displayName")]
+        public string? DisplayName { get; set; }
+    }
+
+    // Represents a Data Source not tied to a user (e.g. SharePoint site)
+    public class EdiscoveryNoncustodialDataSource : DataSourceContainer { }
+
+    // Represents a generic container of data sources
+    public class DataSourceContainer : Entity 
+    {
+        [JsonPropertyName("displayName")]
+        public string? DisplayName { get; set; }
+        
+        [JsonPropertyName("createdDateTime")]
+        public DateTimeOffset? CreatedDateTime { get; set; }
+    }
+
+    // Represents a long-running operation (index, export, estimate)
+    public class CaseOperation : Entity
+    {
+        [JsonPropertyName("status")]
+        public string? Status { get; set; } // e.g., "notStarted", "running", "succeeded"
+
+        [JsonPropertyName("action")]
+        public string? Action { get; set; }
+    }
+
+    // Specific operation for Search Estimation
+    public class EdiscoveryEstimateOperation : CaseOperation
+    {
+        [JsonPropertyName("indexedItemCount")]
+        public long? IndexedItemCount { get; set; }
+
+        [JsonPropertyName("indexedItemsSize")]
+        public long? IndexedItemsSize { get; set; }
+    }
+
+    // Represents a Review Set (where documents are analyzed)
+    public class EdiscoveryReviewSet : Entity 
+    {
+        [JsonPropertyName("displayName")]
+        public string? DisplayName { get; set; }
+    }
+
+    // Represents Case Settings
+    public class EdiscoveryCaseSettings : Entity 
+    { 
+        // Properties like Ocr, RedundancyDetection, etc.
+    }
+
+    // Represents a Tag
+    public class EdiscoveryReviewTag : Entity 
+    {
+        [JsonPropertyName("displayName")]
+        public string? DisplayName { get; set; }
+    }
+
+    // Represents a generic Data Source (Mailbox, Site)
+    public class DataSource : Entity
+    {
+        [JsonPropertyName("displayName")]
+        public string? DisplayName { get; set; }
+
+        [JsonPropertyName("holdStatus")]
+        public string? HoldStatus { get; set; }
+    }
+
+    // ==========================================
+    // 5. Helpers & Enums
+    // ==========================================
+
+    public class IdentitySet
+    {
+        [JsonPropertyName("user")]
+        public Identity? User { get; set; }
+    }
+
+    public class Identity
+    {
+        [JsonPropertyName("id")]
+        public string? Id { get; set; }
+
+        [JsonPropertyName("displayName")]
+        public string? DisplayName { get; set; }
+    }
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum CaseStatus
+    {
+        Unknown,
+        Active,
+        PendingDelete,
+        Closing,
+        Closed,
+        ClosedWithError
+    }
+
+    [Flags]
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum DataSourceScopes
+    {
+        None = 0,
+        AllTenantMailboxes = 1,
+        AllTenantSites = 2,
+        AllCaseCustodians = 4,
+        AllCaseNoncustodialDataSources = 8
+    }
+}
