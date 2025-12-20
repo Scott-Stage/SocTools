@@ -1,1 +1,1 @@
-GET https://graph.microsoft.com/v1.0/security/cases/ediscoveryCases?$top=10&$orderby=createdDateTime desc
+?$filter=displayName eq 'Project Apollo Investigation'
