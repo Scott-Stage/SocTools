@@ -1,8 +1,1 @@
-var recentCases = await graphClient.Security.Cases.EdiscoveryCases.GetAsync((config) =>
-{
-    // 1. Sort by createdDateTime in Descending order (newest first)
-    config.QueryParameters.Orderby = new[] { "createdDateTime desc" };
-    
-    // 2. Take the top 10
-    config.QueryParameters.Top = 10;
-});
+GET https://graph.microsoft.com/v1.0/security/cases/ediscoveryCases?$top=10&$orderby=createdDateTime desc
