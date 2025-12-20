@@ -1,8 +1,101 @@
-public class GraphCollectionResponse<T>
-{
-    [JsonPropertyName("value")]
-    public List<T>? Value { get; set; }
+// ==========================================
+    // 1. The Purge Operation (Return Value)
+    // Resource: microsoft.graph.security.ediscoveryPurgeDataOperation
+    // ==========================================
+    public class EdiscoveryPurgeDataOperation : CaseOperation
+    {
+        // This class inherits all properties from CaseOperation.
+        // As of v1.0, it does not have unique public properties of its own, 
+        // but the 'Action' property will strictly be "purgeData".
+    }
 
-    [JsonPropertyName("@odata.nextLink")]
-    public string? NextLink { get; set; }
-}
+    // ==========================================
+    // 2. Base Operation Class
+    // Resource: microsoft.graph.security.caseOperation
+    // ==========================================
+    public class CaseOperation : Entity
+    {
+        // Type of action (e.g., "purgeData", "addToReviewSet")
+        [JsonPropertyName("action")]
+        public CaseAction? Action { get; set; }
+
+        // Date when the operation was created
+        [JsonPropertyName("createdDateTime")]
+        public DateTimeOffset? CreatedDateTime { get; set; }
+
+        // Date when the operation finished (null if running)
+        [JsonPropertyName("completedDateTime")]
+        public DateTimeOffset? CompletedDateTime { get; set; }
+
+        // The user who started the operation
+        [JsonPropertyName("createdBy")]
+        public IdentitySet? CreatedBy { get; set; }
+
+        // Progress percentage (0-100)
+        [JsonPropertyName("percentProgress")]
+        public int? PercentProgress { get; set; }
+
+        // Result details (Success/Failure codes and messages)
+        [JsonPropertyName("resultInfo")]
+        public ResultInfo? ResultInfo { get; set; }
+
+        // Current status (running, succeeded, failed, etc.)
+        [JsonPropertyName("status")]
+        public CaseOperationStatus? Status { get; set; }
+    }
+
+    // ==========================================
+    // 3. Result Info (Details on Success/Failure)
+    // ==========================================
+    public class ResultInfo
+    {
+        [JsonPropertyName("code")]
+        public int? Code { get; set; }
+
+        [JsonPropertyName("subcode")]
+        public int? Subcode { get; set; }
+
+        [JsonPropertyName("message")]
+        public string? Message { get; set; }
+    }
+
+    // ==========================================
+    // 4. Enums
+    // ==========================================
+    
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum CaseOperationStatus
+    {
+        NotStarted,
+        SubmissionFailed,
+        Running,
+        Succeeded,
+        PartiallySucceeded,
+        Failed,
+        UnknownFutureValue
+    }
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum CaseAction
+    {
+        AddToReviewSet,
+        ApplyTags,
+        ContentExport,
+        ConvertToPdf,
+        EstimateStatistics,
+        Index,
+        PurgeData,
+        ExportReport,
+        ExportResult,
+        HoldUpdate,
+        UnknownFutureValue
+    }
+
+    // ==========================================
+    // 5. Common Helper (If not already defined)
+    // ==========================================
+    public class Entity
+    {
+        [JsonPropertyName("id")]
+        public string? Id { get; set; }
+    }
