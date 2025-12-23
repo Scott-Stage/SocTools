@@ -1,101 +1,290 @@
-// ==========================================
-    // 1. The Purge Operation (Return Value)
-    // Resource: microsoft.graph.security.ediscoveryPurgeDataOperation
-    // ==========================================
-    public class EdiscoveryPurgeDataOperation : CaseOperation
+@page "/ediscovery"
+@attribute [Authorize]
+
+<PageTitle>eDiscovery</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="py-6">
+    <MudGrid GutterSize="3">
+        <MudItem xs="12" md="3">
+            <MudStack Spacing="3">
+                <MudPaper Elevation="2" Class="p-4">
+                    <MudStack Spacing="1">
+                        <MudText Typo="Typo.subtitle2">Connection</MudText>
+                        <MudStack Direction="Row" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                            <MudChip T="string" Color="@(IsGraphConnected ? Color.Success : Color.Error)" Variant="Variant.Filled" Size="Size.Small">
+                                @(IsGraphConnected ? "Connected" : "Disconnected")
+                            </MudChip>
+                            <MudText Typo="Typo.caption" Class="text-secondary">@ConnectedUser.DisplayName</MudText>
+                        </MudStack>
+                        <MudText Typo="Typo.caption" Class="text-secondary">@ConnectedUser.UserPrincipalName</MudText>
+                        <MudText Typo="Typo.caption" Class="text-secondary">Last checked: @LastGraphCheck.ToString("g")</MudText>
+                    </MudStack>
+                </MudPaper>
+
+                <MudPaper Elevation="2" Class="p-4">
+                    <MudStack Spacing="2">
+                        <MudText Typo="Typo.h6" Class="font-weight-bold">Find Case</MudText>
+                        <MudTextField T="string" Label="Case name" Variant="Variant.Outlined" Placeholder="Search by name" @bind-Value="CaseSearchTerm" />
+                        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Search" OnClick="RunCaseSearch">Search</MudButton>
+                        @if (CaseSearchResults.Count > 0)
+                        {
+                            <MudPaper Elevation="0" Class="p-2">
+                                <MudStack Spacing="1">
+                                    <MudText Typo="Typo.caption" Class="text-secondary">Matches</MudText>
+                                    @foreach (var result in CaseSearchResults.Where(result => result is not null))
+                                    {
+                                        <MudPaper Elevation="0" Class="p-2 w-100">
+                                            <MudStack Direction="Row"
+                                                      AlignItems="AlignItems.Center"
+                                                      Justify="Justify.SpaceBetween"
+                                                      Spacing="1"
+                                                      OnClick="@(() => SelectCase(result))"
+                                                      Class="w-100"
+                                                      Style="min-width: 0; flex-wrap: nowrap; cursor: pointer;">
+                                                <MudText Typo="Typo.subtitle2"
+                                                         Class="text-secondary"
+                                                         Style="flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                                    @result.Name
+                                                </MudText>
+                                                <MudChip T="string"
+                                                         Color="@GetCaseStatusColor(result.Status)"
+                                                         Size="Size.Small"
+                                                         Style="flex-shrink: 0; white-space: nowrap;">
+                                                    @result.Status
+                                                </MudChip>
+                                            </MudStack>
+                                        </MudPaper>
+                                    }
+                                </MudStack>
+                            </MudPaper>
+                        }
+                        else if (!string.IsNullOrWhiteSpace(CaseSearchTerm))
+                        {
+                            <MudText Typo="Typo.caption" Class="text-secondary">No cases found.</MudText>
+                        }
+                    </MudStack>
+                </MudPaper>
+            </MudStack>
+        </MudItem>
+
+        <MudItem xs="12" md="9">
+            <MudStack Spacing="3">
+                @if (ActiveCase is not null)
+                {
+                    <MudPaper Elevation="2" Class="p-4">
+                        <MudStack Direction="Row" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                            <MudStack Spacing="1">
+                                <MudText Typo="Typo.h5" Class="font-weight-bold">@ActiveCase.Name</MudText>
+                                <MudText Typo="Typo.body2" Class="text-secondary">@ActiveCase.Description</MudText>
+                            </MudStack>
+                            <MudButton Color="Color.Primary" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Assignment">Open Case</MudButton>
+                        </MudStack>
+                        <MudDivider Class="my-2" />
+                        <MudGrid GutterSize="3">
+                            <MudItem xs="12" sm="6" md="3">
+                                <MudText Typo="Typo.caption" Class="text-secondary">Owner</MudText>
+                                <MudText Typo="Typo.body1">@ActiveCase.Owner</MudText>
+                            </MudItem>
+                            <MudItem xs="12" sm="6" md="3">
+                                <MudText Typo="Typo.caption" Class="text-secondary">Status</MudText>
+                                <MudChip T="string" Color="@GetCaseStatusColor(ActiveCase.Status)" Variant="Variant.Filled">@ActiveCase.Status</MudChip>
+                            </MudItem>
+                            <MudItem xs="12" sm="6" md="3">
+                                <MudText Typo="Typo.caption" Class="text-secondary">Created</MudText>
+                                <MudText Typo="Typo.body1">@ActiveCase.CreatedOn.ToString("d")</MudText>
+                            </MudItem>
+                            <MudItem xs="12" sm="6" md="3">
+                                <MudText Typo="Typo.caption" Class="text-secondary">Last Update</MudText>
+                                <MudText Typo="Typo.body1">@ActiveCase.UpdatedOn.ToString("g")</MudText>
+                            </MudItem>
+                        </MudGrid>
+                        <MudDivider Class="my-3" />
+
+
+                            @foreach (var search in ActiveSearches)
+                            {
+                                        <MudStack Direction="Row" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                                            <MudStack Spacing="1">
+                                                <MudText Typo="Typo.h5" Class="font-weight-bold">@search.Name</MudText>
+                                            </MudStack>
+                                        </MudStack>
+                                        <MudGrid GutterSize="2">
+                                            <MudItem xs="12" md="4">
+                                                <MudText Typo="Typo.caption" Class="text-secondary">Status</MudText>
+                                                <MudChip T="string" Color="@GetSearchStatusColor(search.Status)" Variant="Variant.Filled" Size="Size.Small">@search.Status</MudChip>
+                                            </MudItem>
+                                            <MudItem xs="12" md="4">
+                                                <MudText Typo="Typo.caption" Class="text-secondary">Items</MudText>
+                                                <MudText Typo="Typo.body2">@search.ItemCount</MudText>
+                                            </MudItem>
+                                            <MudItem xs="12" md="4">
+                                                <MudText Typo="Typo.caption" Class="text-secondary">Last Run</MudText>
+                                                <MudText Typo="Typo.body2">@search.LastRun.ToString("g")</MudText>
+                                            </MudItem>
+                                            <MudItem xs="12">
+                                                <MudText Typo="Typo.body2">Query: @search.Query</MudText>
+                                            </MudItem>
+                                            <MudItem xs="12">
+                                                <MudText Typo="Typo.body2">Locations: @search.Locations</MudText>
+                                            </MudItem>
+                                            <MudItem xs="12">
+                                                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary">Fetch Details</MudButton>
+                                            </MudItem>
+                                        </MudGrid>
+                                        <MudDivider Class="my-3" />
+
+                                    
+
+                            }
+
+                    </MudPaper>
+                }
+            </MudStack>
+        </MudItem>
+    </MudGrid>
+</MudContainer>
+
+@code {
+    private string CaseSearchTerm { get; set; } = string.Empty;
+    private List<CaseProfile> CaseSearchResults { get; } = new();
+
+    private bool IsGraphConnected { get; set; } = true;
+    private DateTime LastGraphCheck { get; set; } = DateTime.Now.AddMinutes(-6);
+    private ConnectedIdentity ConnectedUser { get; } = new()
     {
-        // This class inherits all properties from CaseOperation.
-        // As of v1.0, it does not have unique public properties of its own, 
-        // but the 'Action' property will strictly be "purgeData".
+        DisplayName = "Alex Waller",
+        UserPrincipalName = "alex.waller@contoso.com"
+    };
+
+    private CaseProfile ActiveCase { get; set; } = new()
+    {
+        Name = "Contoso Insider Trading Review",
+        Owner = "Morgan Lee",
+        Status = "Active",
+        Description = "Priority review for Q4 trading communications and broker outreach.",
+        CreatedOn = new DateTime(2024, 11, 12),
+        UpdatedOn = new DateTime(2025, 2, 18, 9, 45, 0)
+    };
+
+    private readonly List<CaseProfile> AllCases = new()
+    {
+        new CaseProfile
+        {
+            Name = "Contoso Insider Trading Review",
+            Owner = "Morgan Lee",
+            Status = "Active",
+            Description = "Priority review for Q4 trading communications and broker outreach.",
+            CreatedOn = new DateTime(2024, 11, 12),
+            UpdatedOn = new DateTime(2025, 2, 18, 9, 45, 0)
+        },
+        new CaseProfile
+        {
+            Name = "HR Retention Inquiry",
+            Owner = "Priya Shah",
+            Status = "Hold",
+            Description = "Targeted retention review for HR mailbox and exit surveys.",
+            CreatedOn = new DateTime(2025, 1, 6),
+            UpdatedOn = new DateTime(2025, 2, 12, 14, 10, 0)
+        },
+        new CaseProfile
+        {
+            Name = "Vendor Dispute Response",
+            Owner = "Jordan Smith",
+            Status = "Closed",
+            Description = "Legal review of vendor communications and contract amendments.",
+            CreatedOn = new DateTime(2024, 9, 18),
+            UpdatedOn = new DateTime(2024, 12, 22, 16, 30, 0)
+        }
+    };
+
+    private readonly List<SearchSummary> ActiveSearches = new()
+    {
+        new SearchSummary("Trading Floor Mailboxes", "Ready", "subject:(earnings OR guidance)", "mailboxes: Trading Floor", 16234, new DateTime(2025, 2, 18, 8, 30, 0)),
+        new SearchSummary("Teams Chat Review", "Running", "body:(forward guidance)", "teams: Trading Floor Channel", 6820, new DateTime(2025, 2, 18, 9, 15, 0)),
+        new SearchSummary("Compliance Escalations", "Ready", "subject:(blackout)", "mailboxes: Compliance", 1847, new DateTime(2025, 2, 16, 14, 10, 0))
+    };
+
+    private static Color GetCaseStatusColor(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status))
+        {
+            return Color.Default;
+        }
+
+        return status.ToLowerInvariant() switch
+        {
+            "active" => Color.Success,
+            "hold" => Color.Warning,
+            "closed" => Color.Default,
+            _ => Color.Info
+        };
     }
 
-    // ==========================================
-    // 2. Base Operation Class
-    // Resource: microsoft.graph.security.caseOperation
-    // ==========================================
-    public class CaseOperation : Entity
+    private static Color GetSearchStatusColor(string? status)
     {
-        // Type of action (e.g., "purgeData", "addToReviewSet")
-        [JsonPropertyName("action")]
-        public CaseAction? Action { get; set; }
+        if (string.IsNullOrWhiteSpace(status))
+        {
+            return Color.Default;
+        }
 
-        // Date when the operation was created
-        [JsonPropertyName("createdDateTime")]
-        public DateTimeOffset? CreatedDateTime { get; set; }
-
-        // Date when the operation finished (null if running)
-        [JsonPropertyName("completedDateTime")]
-        public DateTimeOffset? CompletedDateTime { get; set; }
-
-        // The user who started the operation
-        [JsonPropertyName("createdBy")]
-        public IdentitySet? CreatedBy { get; set; }
-
-        // Progress percentage (0-100)
-        [JsonPropertyName("percentProgress")]
-        public int? PercentProgress { get; set; }
-
-        // Result details (Success/Failure codes and messages)
-        [JsonPropertyName("resultInfo")]
-        public ResultInfo? ResultInfo { get; set; }
-
-        // Current status (running, succeeded, failed, etc.)
-        [JsonPropertyName("status")]
-        public CaseOperationStatus? Status { get; set; }
+        return status.ToLowerInvariant() switch
+        {
+            "running" => Color.Info,
+            "ready" => Color.Success,
+            "hold" => Color.Warning,
+            _ => Color.Default
+        };
     }
 
-    // ==========================================
-    // 3. Result Info (Details on Success/Failure)
-    // ==========================================
-    public class ResultInfo
+    private SearchLayoutMode SearchLayout { get; set; } = SearchLayoutMode.HeaderRow;
+    private void OnSearchLayoutChanged(SearchLayoutMode value)
     {
-        [JsonPropertyName("code")]
-        public int? Code { get; set; }
-
-        [JsonPropertyName("subcode")]
-        public int? Subcode { get; set; }
-
-        [JsonPropertyName("message")]
-        public string? Message { get; set; }
+        SearchLayout = value;
     }
 
-    // ==========================================
-    // 4. Enums
-    // ==========================================
-    
-    [JsonConverter(typeof(JsonStringEnumConverter))]
-    public enum CaseOperationStatus
+    private void RunCaseSearch()
     {
-        NotStarted,
-        SubmissionFailed,
-        Running,
-        Succeeded,
-        PartiallySucceeded,
-        Failed,
-        UnknownFutureValue
+        var term = CaseSearchTerm.Trim();
+        CaseSearchResults.Clear();
+
+        if (string.IsNullOrWhiteSpace(term))
+        {
+            return;
+        }
+
+        CaseSearchResults.AddRange(AllCases.Where(c =>
+            c.Name.Contains(term, StringComparison.OrdinalIgnoreCase)));
     }
 
-    [JsonConverter(typeof(JsonStringEnumConverter))]
-    public enum CaseAction
+    private void SelectCase(CaseProfile selected)
     {
-        AddToReviewSet,
-        ApplyTags,
-        ContentExport,
-        ConvertToPdf,
-        EstimateStatistics,
-        Index,
-        PurgeData,
-        ExportReport,
-        ExportResult,
-        HoldUpdate,
-        UnknownFutureValue
+        ActiveCase = selected;
     }
 
-    // ==========================================
-    // 5. Common Helper (If not already defined)
-    // ==========================================
-    public class Entity
+    private sealed class CaseProfile
     {
-        [JsonPropertyName("id")]
-        public string? Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string Owner { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public DateTime CreatedOn { get; set; }
+        public DateTime UpdatedOn { get; set; }
     }
+
+    private sealed record SearchSummary(string Name, string Status, string Query, string Locations, int ItemCount, DateTime LastRun);
+
+    private sealed class ConnectedIdentity
+    {
+        public string DisplayName { get; set; } = string.Empty;
+        public string UserPrincipalName { get; set; } = string.Empty;
+    }
+
+    private enum SearchLayoutMode
+    {
+        Compact = 1,
+        HeaderRow = 2,
+        TwoColumn = 3,
+        Chips = 4,
+        SummaryStrip = 5
+    }
+}
