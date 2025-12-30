@@ -1,1 +1,39 @@
-GET https://graph.microsoft.com/v1.0/security/cases/ediscoveryCases?$select=id,displayName,status,createdBy
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Authorization
+@attribute [AllowAnonymous] 
+
+<h3>Authentication Debugger</h3>
+
+<AuthorizeView>
+    <Authorized>
+        <div class="alert alert-success">
+            <strong>User:</strong> @context.User.Identity?.Name <br/>
+            <strong>Auth Type:</strong> @context.User.Identity?.AuthenticationType
+        </div>
+
+        <h4>Your Claims (Copy the Group SID from here)</h4>
+        <table class="table table-bordered table-sm table-striped">
+            <thead>
+                <tr>
+                    <th>Claim Type</th>
+                    <th>Value</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var claim in context.User.Claims)
+                {
+                    <tr>
+                        <td style="font-family: monospace; font-size: 0.9em;">@claim.Type</td>
+                        <td style="font-family: monospace; font-size: 0.9em;">@claim.Value</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </Authorized>
+    <NotAuthorized>
+        <div class="alert alert-danger">
+            You are NOT logged in. Windows Auth is not working.
+            Check launchSettings.json.
+        </div>
+    </NotAuthorized>
+</AuthorizeView>
