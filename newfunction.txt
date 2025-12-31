@@ -1,92 +1,38 @@
-public static class DirectoryServicesExtensions
+private static object? SafeChangeType(object? value, Type targetType)
+{
+    if (value == null) return null;
+
+    // 1. Unwrap Nullable Types (e.g. int? -> int)
+    Type? underlyingType = Nullable.GetUnderlyingType(targetType);
+    if (underlyingType != null) targetType = underlyingType;
+
+    // 2. Direct Assignment (e.g. byte[] -> byte[])
+    if (targetType.IsInstanceOfType(value)) return value;
+
+    // 3. Handle Binary Data (The source of your errors)
+    if (value is byte[] bytes)
     {
-        public static T ToObject<T>(this SearchResult result) where T : new()
+        // A. Target is Guid (e.g. public Guid ObjectGuid { get; set; })
+        if (targetType == typeof(Guid)) return new Guid(bytes);
+
+        // B. Target is String (e.g. public string ObjectGuid { get; set; })
+        if (targetType == typeof(string))
         {
-            var instance = new T();
-            var properties = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            // Is it a GUID? (16 bytes)
+            if (bytes.Length == 16) return new Guid(bytes).ToString();
 
-            foreach (var prop in properties)
-            {
-                // Assuming Property Name matches AD Attribute Name
-                string attrName = prop.Name;
+            // Is it a SID? (Starts with S-...)
+            try 
+            { 
+                 return new System.Security.Principal.SecurityIdentifier(bytes, 0).ToString(); 
+            } 
+            catch { /* Not a SID, continue */ }
 
-                if (result.Properties.Contains(attrName))
-                {
-                    var valCollection = result.Properties[attrName];
-                    
-                    if (valCollection != null && valCollection.Count > 0)
-                    {
-                        try 
-                        {
-                            // CASE 1: Lists (Multi-value attributes like memberOf)
-                            if (prop.PropertyType != typeof(string) && typeof(IEnumerable).IsAssignableFrom(prop.PropertyType) && prop.PropertyType != typeof(byte[]))
-                            {
-                                var listType = prop.PropertyType.GetGenericArguments()[0];
-                                var genericListType = typeof(List<>).MakeGenericType(listType);
-                                var listInstance = (IList)Activator.CreateInstance(genericListType)!;
-
-                                foreach (var item in valCollection)
-                                {
-                                    listInstance.Add(SafeChangeType(item, listType));
-                                }
-                                prop.SetValue(instance, listInstance);
-                            }
-                            // CASE 2: Single Value
-                            else
-                            {
-                                var val = valCollection[0];
-                                var converted = SafeChangeType(val, prop.PropertyType);
-                                prop.SetValue(instance, converted);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            // Optional: Log error saying which property failed
-                            Console.WriteLine($"Failed to map property '{attrName}': {ex.Message}");
-                        }
-                    }
-                }
-            }
-            return instance;
-        }
-
-        /// <summary>
-        /// Handles specific AD type conversions that Convert.ChangeType cannot handle.
-        /// </summary>
-        private static object? SafeChangeType(object? value, Type targetType)
-        {
-            if (value == null) return null;
-
-            // 1. Handle Nullable Types (e.g. int?)
-            Type? underlyingType = Nullable.GetUnderlyingType(targetType);
-            if (underlyingType != null)
-            {
-                targetType = underlyingType;
-            }
-
-            // 2. Direct Assignment (e.g. byte[] to byte[], or string to string)
-            if (targetType.IsInstanceOfType(value))
-            {
-                return value;
-            }
-
-            // 3. Handle AD GUIDs (Stored as byte[] in AD, but we want Guid in C#)
-            if (targetType == typeof(Guid) && value is byte[] bytes)
-            {
-                return new Guid(bytes);
-            }
-            
-            // 4. Handle AD SIDs (Stored as byte[] in AD, we usually want SecurityIdentifier or String)
-            if (targetType == typeof(string) && value is byte[] sidBytes)
-            {
-                 // Convert byte[] SID to SDDL string (S-1-5-21...)
-                 try {
-                     var sid = new System.Security.Principal.SecurityIdentifier(sidBytes, 0);
-                     return sid.ToString();
-                 } catch { return BitConverter.ToString(sidBytes); }
-            }
-
-            // 5. Fallback to standard conversion
-            return Convert.ChangeType(value, targetType);
+            // Default: Convert Image/Hash to Base64 String so it doesn't crash
+            return Convert.ToBase64String(bytes);
         }
     }
+
+    // 4. Fallback for everything else
+    return Convert.ChangeType(value, targetType);
+}
