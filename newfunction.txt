@@ -1,61 +1,92 @@
-using System;
-using System.Collections.Generic;
-using System.DirectoryServices;
-using System.Linq;
-using System.Reflection;
-
 public static class DirectoryServicesExtensions
-{
-    public static T ToObject<T>(this SearchResult result) where T : new()
     {
-        var instance = new T();
-        var type = typeof(T);
-        var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
-
-        foreach (var prop in properties)
+        public static T ToObject<T>(this SearchResult result) where T : new()
         {
-            // 1. Identify the AD attribute name
-            // You can use a custom attribute or just default to the property name
-            string attributeName = prop.Name; 
-            
-            // Check if the ResultCollection contains this property
-            if (result.Properties.Contains(attributeName))
+            var instance = new T();
+            var properties = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+            foreach (var prop in properties)
             {
-                var valCollection = result.Properties[attributeName];
+                // Assuming Property Name matches AD Attribute Name
+                string attrName = prop.Name;
 
-                if (valCollection != null && valCollection.Count > 0)
+                if (result.Properties.Contains(attrName))
                 {
-                    // 2. Handle Lists/Arrays (Multi-valued attributes like 'memberOf')
-                    if (prop.PropertyType != typeof(string) && typeof(System.Collections.IEnumerable).IsAssignableFrom(prop.PropertyType))
+                    var valCollection = result.Properties[attrName];
+                    
+                    if (valCollection != null && valCollection.Count > 0)
                     {
-                        var listType = prop.PropertyType.GetGenericArguments()[0];
-                        var genericListType = typeof(List<>).MakeGenericType(listType);
-                        var listInstance = (System.Collections.IList)Activator.CreateInstance(genericListType);
+                        try 
+                        {
+                            // CASE 1: Lists (Multi-value attributes like memberOf)
+                            if (prop.PropertyType != typeof(string) && typeof(IEnumerable).IsAssignableFrom(prop.PropertyType) && prop.PropertyType != typeof(byte[]))
+                            {
+                                var listType = prop.PropertyType.GetGenericArguments()[0];
+                                var genericListType = typeof(List<>).MakeGenericType(listType);
+                                var listInstance = (IList)Activator.CreateInstance(genericListType)!;
 
-                        foreach (var item in valCollection)
-                        {
-                            // Helper to change type safely
-                            listInstance.Add(Convert.ChangeType(item, listType));
+                                foreach (var item in valCollection)
+                                {
+                                    listInstance.Add(SafeChangeType(item, listType));
+                                }
+                                prop.SetValue(instance, listInstance);
+                            }
+                            // CASE 2: Single Value
+                            else
+                            {
+                                var val = valCollection[0];
+                                var converted = SafeChangeType(val, prop.PropertyType);
+                                prop.SetValue(instance, converted);
+                            }
                         }
-                        prop.SetValue(instance, listInstance);
-                    }
-                    // 3. Handle Single Values (Strings, Ints, etc.)
-                    else
-                    {
-                        // Always grab the first index [0] for single value properties
-                        var rawValue = valCollection[0];
-                        
-                        // Handle potential DBNull or other AD artifacts
-                        if (rawValue != null)
+                        catch (Exception ex)
                         {
-                            // Convert to correct type (e.g. "123" string -> 123 int)
-                            var convertedValue = Convert.ChangeType(rawValue, prop.PropertyType);
-                            prop.SetValue(instance, convertedValue);
+                            // Optional: Log error saying which property failed
+                            Console.WriteLine($"Failed to map property '{attrName}': {ex.Message}");
                         }
                     }
                 }
             }
+            return instance;
         }
-        return instance;
+
+        /// <summary>
+        /// Handles specific AD type conversions that Convert.ChangeType cannot handle.
+        /// </summary>
+        private static object? SafeChangeType(object? value, Type targetType)
+        {
+            if (value == null) return null;
+
+            // 1. Handle Nullable Types (e.g. int?)
+            Type? underlyingType = Nullable.GetUnderlyingType(targetType);
+            if (underlyingType != null)
+            {
+                targetType = underlyingType;
+            }
+
+            // 2. Direct Assignment (e.g. byte[] to byte[], or string to string)
+            if (targetType.IsInstanceOfType(value))
+            {
+                return value;
+            }
+
+            // 3. Handle AD GUIDs (Stored as byte[] in AD, but we want Guid in C#)
+            if (targetType == typeof(Guid) && value is byte[] bytes)
+            {
+                return new Guid(bytes);
+            }
+            
+            // 4. Handle AD SIDs (Stored as byte[] in AD, we usually want SecurityIdentifier or String)
+            if (targetType == typeof(string) && value is byte[] sidBytes)
+            {
+                 // Convert byte[] SID to SDDL string (S-1-5-21...)
+                 try {
+                     var sid = new System.Security.Principal.SecurityIdentifier(sidBytes, 0);
+                     return sid.ToString();
+                 } catch { return BitConverter.ToString(sidBytes); }
+            }
+
+            // 5. Fallback to standard conversion
+            return Convert.ChangeType(value, targetType);
+        }
     }
-}
