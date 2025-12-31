@@ -1,200 +1,61 @@
+using System;
+using System.Collections.Generic;
+using System.DirectoryServices;
+using System.Linq;
+using System.Reflection;
 
-This is a classic "User Profile" or "User Session" pattern. Since you are using Blazor (based on our previous troubleshooting), the best approach is a layered one.
-Here is the architecture you should use:
-Database Service: Handle the raw SQL (Read/Write).
-Current User Service (Scoped): A C# class that holds the data in memory for the current user's session so you don't hit the database 100 times a minute.
-MainLayout.razor: The "Trigger" point to load this data when the app starts.
-Here is the implementation.
-Step 1: Define the Data Model
-Create a simple class to represent what you are storing.
-Models/AppUser.cs
-code
-C#
-public class AppUser
+public static class DirectoryServicesExtensions
 {
-    // Matches the Windows Username (e.g., "FTB\P9643")
-    public string Username { get; set; } = string.Empty;
-    
-    // Example settings
-    public string Theme { get; set; } = "Light";
-    public DateTime LastLogin { get; set; }
-    public bool IsFirstTimeUser { get; set; }
-}
-Step 2: Extend your Database Service
-Add the "Get or Create" logic here. This handles the raw interaction with SQLite.
-Services/DatabaseService.cs
-code
-C#
-using Microsoft.Data.Sqlite;
-using Dapper; // Highly recommended for SQLite, or use raw SqliteCommand
-
-public class DatabaseService
-{
-    private readonly string _connectionString;
-
-    public DatabaseService(string connectionString)
+    public static T ToObject<T>(this SearchResult result) where T : new()
     {
-        _connectionString = connectionString;
-        InitializeTables();
-    }
+        var instance = new T();
+        var type = typeof(T);
+        var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
 
-    private void InitializeTables()
-    {
-        using var conn = new SqliteConnection(_connectionString);
-        conn.Open();
-        string sql = @"
-            CREATE TABLE IF NOT EXISTS Users (
-                Username TEXT PRIMARY KEY,
-                Theme TEXT,
-                LastLogin TEXT
-            );";
-        conn.Execute(sql);
-    }
-
-    // The Logic you requested: Check, Read, or Create
-    public async Task<AppUser> GetOrCreateUserAsync(string username)
-    {
-        using var conn = new SqliteConnection(_connectionString);
-        
-        // 1. Try to get existing
-        var user = await conn.QueryFirstOrDefaultAsync<AppUser>(
-            "SELECT * FROM Users WHERE Username = @Username", new { Username = username });
-
-        if (user != null)
+        foreach (var prop in properties)
         {
-            // Update Last Login
-            await conn.ExecuteAsync(
-                "UPDATE Users SET LastLogin = @Now WHERE Username = @Username", 
-                new { Now = DateTime.UtcNow, Username = username });
+            // 1. Identify the AD attribute name
+            // You can use a custom attribute or just default to the property name
+            string attributeName = prop.Name; 
             
-            return user;
+            // Check if the ResultCollection contains this property
+            if (result.Properties.Contains(attributeName))
+            {
+                var valCollection = result.Properties[attributeName];
+
+                if (valCollection != null && valCollection.Count > 0)
+                {
+                    // 2. Handle Lists/Arrays (Multi-valued attributes like 'memberOf')
+                    if (prop.PropertyType != typeof(string) && typeof(System.Collections.IEnumerable).IsAssignableFrom(prop.PropertyType))
+                    {
+                        var listType = prop.PropertyType.GetGenericArguments()[0];
+                        var genericListType = typeof(List<>).MakeGenericType(listType);
+                        var listInstance = (System.Collections.IList)Activator.CreateInstance(genericListType);
+
+                        foreach (var item in valCollection)
+                        {
+                            // Helper to change type safely
+                            listInstance.Add(Convert.ChangeType(item, listType));
+                        }
+                        prop.SetValue(instance, listInstance);
+                    }
+                    // 3. Handle Single Values (Strings, Ints, etc.)
+                    else
+                    {
+                        // Always grab the first index [0] for single value properties
+                        var rawValue = valCollection[0];
+                        
+                        // Handle potential DBNull or other AD artifacts
+                        if (rawValue != null)
+                        {
+                            // Convert to correct type (e.g. "123" string -> 123 int)
+                            var convertedValue = Convert.ChangeType(rawValue, prop.PropertyType);
+                            prop.SetValue(instance, convertedValue);
+                        }
+                    }
+                }
+            }
         }
-
-        // 2. Create new if not exists
-        var newUser = new AppUser
-        {
-            Username = username,
-            Theme = "Dark", // Default
-            LastLogin = DateTime.UtcNow,
-            IsFirstTimeUser = true
-        };
-
-        string insertSql = @"
-            INSERT INTO Users (Username, Theme, LastLogin) 
-            VALUES (@Username, @Theme, @LastLogin)";
-            
-        await conn.ExecuteAsync(insertSql, newUser);
-
-        return newUser;
-    }
-
-    // Method to update settings later
-    public async Task UpdateUserThemeAsync(string username, string newTheme)
-    {
-        using var conn = new SqliteConnection(_connectionString);
-        await conn.ExecuteAsync(
-            "UPDATE Users SET Theme = @Theme WHERE Username = @Username",
-            new { Theme = newTheme, Username = username });
-    }
-}
-Step 3: Create a Scoped "User State" Service
-You don't want to query the database every time you switch pages. You want a service that caches this user's info for their specific HTTP request/Circuit.
-Services/UserSessionService.cs
-code
-C#
-public class UserSessionService
-{
-    private readonly DatabaseService _db;
-    public AppUser? CurrentUser { get; private set; }
-
-    public UserSessionService(DatabaseService db)
-    {
-        _db = db;
-    }
-
-    public async Task InitializeAsync(string username)
-    {
-        if (CurrentUser == null || CurrentUser.Username != username)
-        {
-            CurrentUser = await _db.GetOrCreateUserAsync(username);
-        }
-    }
-
-    public async Task SetTheme(string theme)
-    {
-        if (CurrentUser != null)
-        {
-            CurrentUser.Theme = theme;
-            await _db.UpdateUserThemeAsync(CurrentUser.Username, theme);
-        }
+        return instance;
     }
 }
-Register in Program.cs:
-code
-C#
-// Database can be Singleton (sqlite file is shared)
-builder.Services.AddSingleton<DatabaseService>(sp => 
-    new DatabaseService("Data Source=app.db"));
-
-// Session MUST be Scoped (Unique per user connection)
-builder.Services.AddScoped<UserSessionService>();
-Step 4: The Trigger (MainLayout.razor)
-This is the answer to "Where should this logic run?".
-MainLayout.razor is the best place because it wraps your entire application. It runs once when the user connects.
-code
-Razor
-@inherits LayoutComponentBase
-@inject AuthenticationStateProvider AuthStateProvider
-@inject UserSessionService UserSession
-
-<MudThemeProvider IsDarkMode="@_isDarkMode" />
-<MudDialogProvider />
-<MudSnackbarProvider />
-
-<MudLayout>
-    <MudMainContent>
-        @if (_isLoaded)
-        {
-            @Body
-        }
-        else
-        {
-            <MudProgressCircular Indeterminate="true" />
-        }
-    </MudMainContent>
-</MudLayout>
-
-@code {
-    private bool _isLoaded = false;
-    private bool _isDarkMode = false;
-
-    protected override async Task OnInitializedAsync()
-    {
-        // 1. Get the Windows Identity
-        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-        var user = authState.User;
-
-        if (user.Identity?.IsAuthenticated == true)
-        {
-            // 2. Get the unique ID (e.g., FTB\P9643)
-            string username = user.Identity.Name!;
-
-            // 3. Initialize the Database logic
-            await UserSession.InitializeAsync(username);
-
-            // 4. Apply settings from DB to UI
-            _isDarkMode = UserSession.CurrentUser?.Theme == "Dark";
-        }
-
-        _isLoaded = true;
-    }
-}
-Summary of Workflow
-User Logs In: Windows Auth validates them.
-Layout Loads: MainLayout.OnInitializedAsync fires.
-Service Called: UserSession.InitializeAsync calls DatabaseService.GetOrCreateUserAsync.
-Database Check:
-Exists: Returns data.
-New: Inserts row, returns data.
-Memory Cache: UserSession now holds the user's preferences in memory.
-Usage Elsewhere: On any other page, you simply @inject UserSessionService and read UserSession.CurrentUser.Theme.
