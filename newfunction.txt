@@ -1,38 +1,35 @@
-private static object? SafeChangeType(object? value, Type targetType)
+public void ParseDirectoryResult(SearchResult result)
 {
-    if (value == null) return null;
-
-    // 1. Unwrap Nullable Types (e.g. int? -> int)
-    Type? underlyingType = Nullable.GetUnderlyingType(targetType);
-    if (underlyingType != null) targetType = underlyingType;
-
-    // 2. Direct Assignment (e.g. byte[] -> byte[])
-    if (targetType.IsInstanceOfType(value)) return value;
-
-    // 3. Handle Binary Data (The source of your errors)
-    if (value is byte[] bytes)
+    // Helper to safely get the byte array
+    byte[] GetBytes(string propName)
     {
-        // A. Target is Guid (e.g. public Guid ObjectGuid { get; set; })
-        if (targetType == typeof(Guid)) return new Guid(bytes);
-
-        // B. Target is String (e.g. public string ObjectGuid { get; set; })
-        if (targetType == typeof(string))
+        if (result.Properties.Contains(propName) && result.Properties[propName].Count > 0)
         {
-            // Is it a GUID? (16 bytes)
-            if (bytes.Length == 16) return new Guid(bytes).ToString();
-
-            // Is it a SID? (Starts with S-...)
-            try 
-            { 
-                 return new System.Security.Principal.SecurityIdentifier(bytes, 0).ToString(); 
-            } 
-            catch { /* Not a SID, continue */ }
-
-            // Default: Convert Image/Hash to Base64 String so it doesn't crash
-            return Convert.ToBase64String(bytes);
+            return result.Properties[propName][0] as byte[];
         }
+        return null;
     }
 
-    // 4. Fallback for everything else
-    return Convert.ChangeType(value, targetType);
+    // 1. Parsing objectGUID
+    byte[] guidBytes = GetBytes("objectGUID");
+    if (guidBytes != null)
+    {
+        Console.WriteLine("GUID: " + new Guid(guidBytes));
+    }
+
+    // 2. Parsing objectSid
+    byte[] sidBytes = GetBytes("objectSid");
+    if (sidBytes != null)
+    {
+        var sid = new SecurityIdentifier(sidBytes, 0);
+        Console.WriteLine("SID: " + sid.ToString());
+    }
+
+    // 3. Parsing generic binary data (e.g. mS-DS-ConsistencyGuid or custom attributes)
+    byte[] customBytes = GetBytes("mS-DS-ConsistencyGuid");
+    if (customBytes != null)
+    {
+        string hex = BitConverter.ToString(customBytes);
+        Console.WriteLine($"Hex Data: {hex}");
+    }
 }
