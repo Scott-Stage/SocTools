@@ -1,35 +1,164 @@
-public void ParseDirectoryResult(SearchResult result)
+using System;
+using System.DirectoryServices;
+using System.Security.Principal;
+using System.Text.RegularExpressions;
+
+public class AdUserResult
 {
-    // Helper to safely get the byte array
-    byte[] GetBytes(string propName)
+    public string Name { get; set; }
+    public string UserId { get; set; }
+    public string EmailAddress { get; set; }
+    public string Title { get; set; }
+    public string Sid { get; set; }
+    public string Puc { get; set; }
+    public string Division { get; set; }
+    public string Bureau { get; set; }
+    public string Section { get; set; }
+    public bool Enabled { get; set; }
+    public bool LockedOut { get; set; }
+    public bool Expired { get; set; }
+    public string Location { get; set; } // Maps to physicalDeliveryOfficeName
+    public string Description { get; set; }
+    public string ManagerName { get; set; }
+    public string ManagerId { get; set; }
+}
+
+public class AdUserService
+{
+    public AdUserResult GetAdUserDetails(string samAccountName)
     {
-        if (result.Properties.Contains(propName) && result.Properties[propName].Count > 0)
+        // 1. Configure Searcher
+        using (DirectoryEntry entry = new DirectoryEntry("LDAP://DC=ftb,DC=ca,DC=gov")) // Update your path
+        using (DirectorySearcher searcher = new DirectorySearcher(entry))
         {
-            return result.Properties[propName][0] as byte[];
+            searcher.Filter = $"(sAMAccountName={samAccountName})";
+
+            // 2. Explicitly load properties (Improves performance & ensures Computed attributes are fetched)
+            searcher.PropertiesToLoad.AddRange(new[] {
+                "displayName", "name", "userPrincipalName", "mail", "title", "objectSid",
+                "departmentNumber", // PUC often lives here
+                "extensionAttribute12", "extensionAttribute13", "extensionAttribute14",
+                "userAccountControl", "lockoutTime", "msDS-UserPasswordExpiryTimeComputed",
+                "physicalDeliveryOfficeName", "description", "manager"
+            });
+
+            SearchResult result = searcher.FindOne();
+
+            if (result == null) return null;
+
+            // 3. Build the Object
+            var user = new AdUserResult();
+
+            // --- Basic Strings ---
+            user.Name = GetProp(result, "name");
+            user.EmailAddress = GetProp(result, "mail");
+            user.Title = GetProp(result, "title");
+            user.Location = GetProp(result, "physicalDeliveryOfficeName");
+            user.Description = GetProp(result, "description");
+            
+            // --- Custom Mappings ---
+            user.Division = GetProp(result, "extensionAttribute12");
+            user.Bureau = GetProp(result, "extensionAttribute13");
+            user.Section = GetProp(result, "extensionAttribute14");
+
+            // --- User ID (Split logic) ---
+            string upn = GetProp(result, "userPrincipalName"); // e.g. p9643@ftb.ca.gov
+            user.UserId = !string.IsNullOrEmpty(upn) ? upn.Split('@')[0] : "";
+
+            // --- SID (Binary) ---
+            if (result.Properties.Contains("objectSid"))
+            {
+                byte[] sidBytes = (byte[])result.Properties["objectSid"][0];
+                user.Sid = new SecurityIdentifier(sidBytes, 0).ToString();
+            }
+
+            // --- PUC (Remove Curly Braces) ---
+            string rawPuc = GetProp(result, "departmentNumber"); // Assuming this is where PUC is
+            user.Puc = rawPuc?.Replace("{", "").Replace("}", "").Trim();
+
+            // --- Manager Parsing ---
+            // Manager comes back as: CN=Boss Name,OU=SomeOU,DC=ftb...
+            string managerDn = GetProp(result, "manager");
+            if (!string.IsNullOrEmpty(managerDn))
+            {
+                // Extract Name from DN (Logic: Get value between CN= and first comma)
+                var match = Regex.Match(managerDn, "CN=([^,]+)");
+                if (match.Success)
+                {
+                    user.ManagerName = match.Groups[1].Value.Replace("\\", ""); // Remove escape chars
+                }
+
+                // Extract Manager ID
+                // To get the ID, we technically have to bind to the manager's object. 
+                // This is the C# equivalent of the second Get-ADUser call in your script.
+                user.ManagerId = GetManagerIdFromDn(managerDn);
+            }
+
+            // --- Status Flags (The Logic we discussed previously) ---
+            
+            // Enabled
+            int uac = (int)result.Properties["userAccountControl"][0];
+            user.Enabled = !((uac & 0x0002) == 0x0002);
+
+            // Locked (Using DirectoryEntry for Native Method is most reliable)
+            using (DirectoryEntry userEntry = result.GetDirectoryEntry())
+            {
+                // Locked
+                user.LockedOut = (bool)userEntry.InvokeGet("IsAccountLocked");
+
+                // Expired (Using the Computed Attribute from the Search Result)
+                user.Expired = CheckExpiry(result);
+            }
+
+            return user;
+        }
+    }
+
+    // Helper to safely get string properties
+    private string GetProp(SearchResult res, string propName)
+    {
+        if (res.Properties.Contains(propName) && res.Properties[propName].Count > 0)
+        {
+            return res.Properties[propName][0].ToString();
         }
         return null;
     }
 
-    // 1. Parsing objectGUID
-    byte[] guidBytes = GetBytes("objectGUID");
-    if (guidBytes != null)
+    // Helper to fetch Manager ID by binding to their DN
+    private string GetManagerIdFromDn(string distinguishedName)
     {
-        Console.WriteLine("GUID: " + new Guid(guidBytes));
+        try
+        {
+            // Bind directly to the manager object using the DN we found
+            using (DirectoryEntry mgr = new DirectoryEntry($"LDAP://{distinguishedName}"))
+            {
+                // We assume UserID is the first part of UPN, or you could read sAMAccountName
+                string upn = mgr.Properties["userPrincipalName"].Value?.ToString();
+                if (!string.IsNullOrEmpty(upn))
+                {
+                    return upn.Split('@')[0];
+                }
+            }
+        }
+        catch { /* Handle permissions/not found errors */ }
+        
+        return null;
     }
 
-    // 2. Parsing objectSid
-    byte[] sidBytes = GetBytes("objectSid");
-    if (sidBytes != null)
+    // Helper for Expiry Logic
+    private bool CheckExpiry(SearchResult result)
     {
-        var sid = new SecurityIdentifier(sidBytes, 0);
-        Console.WriteLine("SID: " + sid.ToString());
-    }
+        if (!result.Properties.Contains("msDS-UserPasswordExpiryTimeComputed")) return false;
 
-    // 3. Parsing generic binary data (e.g. mS-DS-ConsistencyGuid or custom attributes)
-    byte[] customBytes = GetBytes("mS-DS-ConsistencyGuid");
-    if (customBytes != null)
-    {
-        string hex = BitConverter.ToString(customBytes);
-        Console.WriteLine($"Hex Data: {hex}");
+        long expiryTicks = (long)result.Properties["msDS-UserPasswordExpiryTimeComputed"][0];
+
+        // 0x7FFFFFFFFFFFFFFF = Never Expires
+        if (expiryTicks == long.MaxValue) return false;
+        
+        // 0 = Must change at next logon (effectively expired)
+        if (expiryTicks == 0) return true;
+
+        DateTime expiryDate = DateTime.FromFileTime(expiryTicks);
+        return DateTime.Now > expiryDate;
     }
 }
