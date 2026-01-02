@@ -1,54 +1,77 @@
-public List<AdGroup> GetAdUserGroups(string samAccountName)
+private AdGroup GetGroupDetails(string groupDn)
 {
-    var groups = new System.Collections.Concurrent.ConcurrentBag<AdGroup>();
-
-    using (DirectoryEntry entry = new DirectoryEntry("LDAP://DC=ftb,DC=ca,DC=gov"))
-    using (DirectorySearcher searcher = new DirectorySearcher(entry))
+    try
     {
-        // 1. Find the user again, but ONLY ask for 'memberOf'
-        searcher.Filter = $"(sAMAccountName={samAccountName})";
-        searcher.PropertiesToLoad.Add("memberOf");
-
-        SearchResult result = searcher.FindOne();
-
-        if (result == null || !result.Properties.Contains("memberOf"))
+        // 1. Check if this is a "Foreign Security Principal" (Group from another domain)
+        // FSP Distinguished Names always contain "ForeignSecurityPrincipals"
+        if (groupDn.Contains("ForeignSecurityPrincipals"))
         {
-            return new List<AdGroup>();
+            // The "Name" (CN) of an FSP is just the SID (e.g. "S-1-5-21-...")
+            // We need to extract that SID and translate it to a real name.
+            var match = Regex.Match(groupDn, "CN=(S-1-[^,]+)");
+            if (match.Success)
+            {
+                string sidString = match.Groups[1].Value;
+                try 
+                {
+                    // Use Windows to translate SID -> "DOMAIN\GroupName"
+                    var sid = new SecurityIdentifier(sidString);
+                    var account = sid.Translate(typeof(NTAccount));
+                    
+                    return new AdGroup 
+                    { 
+                        Name = account.Value, // "CORP\Marketing"
+                        Email = null,         // External groups rarely have local emails
+                        DistinguishedName = groupDn 
+                    };
+                }
+                catch 
+                {
+                    // If translation fails (no trust), return the SID as the name
+                    return new AdGroup { Name = sidString, DistinguishedName = groupDn };
+                }
+            }
         }
 
-        // 2. Get the collection of DNs
-        var groupDns = result.Properties["memberOf"];
-
-        // 3. Parallel Process: Speeds up looking up 50+ groups significantly
-        System.Threading.Tasks.Parallel.ForEach(groupDns.Cast<string>(), groupDn =>
+        // 2. Handle Normal Groups
+        using (DirectoryEntry groupEntry = new DirectoryEntry($"LDAP://{groupDn}"))
         {
-            var groupDetail = GetGroupDetails(groupDn);
-            if (groupDetail != null)
+            // Load 'mail' AND 'proxyAddresses' (for backup)
+            groupEntry.RefreshCache(new[] { "name", "mail", "proxyAddresses" });
+
+            string name = groupEntry.Properties["name"].Value?.ToString();
+            string email = groupEntry.Properties["mail"].Value?.ToString();
+
+            // 3. Fallback: If 'mail' is empty, check 'proxyAddresses' for an SMTP address
+            if (string.IsNullOrEmpty(email) && groupEntry.Properties["proxyAddresses"].Count > 0)
             {
-                groups.Add(groupDetail);
+                foreach (string proxy in groupEntry.Properties["proxyAddresses"])
+                {
+                    // Look for the primary SMTP address (starts with capital SMTP:)
+                    if (proxy.StartsWith("SMTP:"))
+                    {
+                        email = proxy.Substring(5);
+                        break;
+                    }
+                    // Or first lowercase smtp: found
+                    if (string.IsNullOrEmpty(email) && proxy.StartsWith("smtp:"))
+                    {
+                        email = proxy.Substring(5);
+                    }
+                }
             }
-        });
+
+            return new AdGroup
+            {
+                DistinguishedName = groupDn,
+                Name = name,
+                Email = email // Will be null if strictly a Security Group
+            };
+        }
     }
-
-    return groups.ToList();
-}
-
-
-
-
-
-public async Task LoadUserProfile(string username)
-{
-    // 1. Fast Call: Get basic info immediately
-    var userProfile = _adService.GetAdUserDetails(username);
-    
-    // Update UI (e.g. "Welcome, John Doe")
-    StateHasChanged(); 
-
-    // 2. Slow Call: Run this in background or show a "Loading Groups..." spinner
-    // We wrap it in Task.Run because DirectoryServices is synchronous/blocking
-    userProfile.Groups = await Task.Run(() => _adService.GetAdUserGroups(username));
-
-    // Update UI again (e.g. Populate the Groups grid)
-    StateHasChanged();
+    catch
+    {
+        // If the group is deleted or permission denied
+        return new AdGroup { DistinguishedName = groupDn, Name = "Restricted/Unknown" };
+    }
 }
