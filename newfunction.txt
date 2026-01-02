@@ -1,164 +1,240 @@
 using System;
+using System.Collections.Generic;
 using System.DirectoryServices;
 using System.Security.Principal;
 using System.Text.RegularExpressions;
 
-public class AdUserResult
+namespace ADService.Models
 {
-    public string Name { get; set; }
-    public string UserId { get; set; }
-    public string EmailAddress { get; set; }
-    public string Title { get; set; }
-    public string Sid { get; set; }
-    public string Puc { get; set; }
-    public string Division { get; set; }
-    public string Bureau { get; set; }
-    public string Section { get; set; }
-    public bool Enabled { get; set; }
-    public bool LockedOut { get; set; }
-    public bool Expired { get; set; }
-    public string Location { get; set; } // Maps to physicalDeliveryOfficeName
-    public string Description { get; set; }
-    public string ManagerName { get; set; }
-    public string ManagerId { get; set; }
+    public class AdUserResult
+    {
+        // Basic Info
+        public string Name { get; set; }
+        public string UserId { get; set; }        // Parsed from UPN
+        public string EmailAddress { get; set; }
+        public string Title { get; set; }
+        public string Location { get; set; }      // physicalDeliveryOfficeName
+        public string Description { get; set; }
+        
+        // IDs & Codes
+        public string Sid { get; set; }           // Converted from Binary
+        public string Puc { get; set; }           // Parsed from departmentNumber
+        
+        // Organization Structure (Extension Attributes)
+        public string Division { get; set; }      // extensionAttribute12
+        public string Bureau { get; set; }        // extensionAttribute13
+        public string Section { get; set; }       // extensionAttribute14
+        
+        // Account Status
+        public bool Enabled { get; set; }
+        public bool LockedOut { get; set; }
+        public bool Expired { get; set; }         // Calculated from msDS-UserPasswordExpiryTimeComputed
+        
+        // Manager Info
+        public string ManagerName { get; set; }
+        public string ManagerId { get; set; }
+        
+        // Group Memberships
+        public List<AdGroup> Groups { get; set; } = new List<AdGroup>();
+    }
+
+    public class AdGroup
+    {
+        public string Name { get; set; }
+        public string Email { get; set; }
+        public string DistinguishedName { get; set; } // Useful for reference
+    }
 }
 
-public class AdUserService
+namespace ADService.Services
 {
-    public AdUserResult GetAdUserDetails(string samAccountName)
+    using ADService.Models;
+
+    public class ActiveDirectoryService
     {
-        // 1. Configure Searcher
-        using (DirectoryEntry entry = new DirectoryEntry("LDAP://DC=ftb,DC=ca,DC=gov")) // Update your path
-        using (DirectorySearcher searcher = new DirectorySearcher(entry))
+        // LDAP Path configuration - Update to match your environment
+        private const string LdapPath = "LDAP://DC=ftb,DC=ca,DC=gov";
+
+        public AdUserResult GetAdUserDetails(string samAccountName)
         {
-            searcher.Filter = $"(sAMAccountName={samAccountName})";
-
-            // 2. Explicitly load properties (Improves performance & ensures Computed attributes are fetched)
-            searcher.PropertiesToLoad.AddRange(new[] {
-                "displayName", "name", "userPrincipalName", "mail", "title", "objectSid",
-                "departmentNumber", // PUC often lives here
-                "extensionAttribute12", "extensionAttribute13", "extensionAttribute14",
-                "userAccountControl", "lockoutTime", "msDS-UserPasswordExpiryTimeComputed",
-                "physicalDeliveryOfficeName", "description", "manager"
-            });
-
-            SearchResult result = searcher.FindOne();
-
-            if (result == null) return null;
-
-            // 3. Build the Object
-            var user = new AdUserResult();
-
-            // --- Basic Strings ---
-            user.Name = GetProp(result, "name");
-            user.EmailAddress = GetProp(result, "mail");
-            user.Title = GetProp(result, "title");
-            user.Location = GetProp(result, "physicalDeliveryOfficeName");
-            user.Description = GetProp(result, "description");
-            
-            // --- Custom Mappings ---
-            user.Division = GetProp(result, "extensionAttribute12");
-            user.Bureau = GetProp(result, "extensionAttribute13");
-            user.Section = GetProp(result, "extensionAttribute14");
-
-            // --- User ID (Split logic) ---
-            string upn = GetProp(result, "userPrincipalName"); // e.g. p9643@ftb.ca.gov
-            user.UserId = !string.IsNullOrEmpty(upn) ? upn.Split('@')[0] : "";
-
-            // --- SID (Binary) ---
-            if (result.Properties.Contains("objectSid"))
+            using (DirectoryEntry entry = new DirectoryEntry(LdapPath))
+            using (DirectorySearcher searcher = new DirectorySearcher(entry))
             {
-                byte[] sidBytes = (byte[])result.Properties["objectSid"][0];
-                user.Sid = new SecurityIdentifier(sidBytes, 0).ToString();
-            }
+                // 1. Filter by Username
+                searcher.Filter = $"(sAMAccountName={samAccountName})";
 
-            // --- PUC (Remove Curly Braces) ---
-            string rawPuc = GetProp(result, "departmentNumber"); // Assuming this is where PUC is
-            user.Puc = rawPuc?.Replace("{", "").Replace("}", "").Trim();
+                // 2. Explicitly load properties to ensure performance & computed values are available
+                searcher.PropertiesToLoad.AddRange(new[] {
+                    "displayName", "name", "userPrincipalName", "mail", "title", "objectSid",
+                    "departmentNumber",                     // PUC
+                    "extensionAttribute12",                 // Division
+                    "extensionAttribute13",                 // Bureau
+                    "extensionAttribute14",                 // Section
+                    "userAccountControl", "lockoutTime",    // Status
+                    "msDS-UserPasswordExpiryTimeComputed",  // Expiry Calculation
+                    "physicalDeliveryOfficeName",           // Location
+                    "description", 
+                    "manager", 
+                    "memberOf"                              // Groups
+                });
 
-            // --- Manager Parsing ---
-            // Manager comes back as: CN=Boss Name,OU=SomeOU,DC=ftb...
-            string managerDn = GetProp(result, "manager");
-            if (!string.IsNullOrEmpty(managerDn))
-            {
-                // Extract Name from DN (Logic: Get value between CN= and first comma)
-                var match = Regex.Match(managerDn, "CN=([^,]+)");
-                if (match.Success)
+                SearchResult result = searcher.FindOne();
+
+                if (result == null) return null;
+
+                // 3. Build the User Object
+                var user = new AdUserResult();
+
+                // --- Direct String Mappings ---
+                user.Name = GetProp(result, "name");
+                user.EmailAddress = GetProp(result, "mail");
+                user.Title = GetProp(result, "title");
+                user.Location = GetProp(result, "physicalDeliveryOfficeName");
+                user.Description = GetProp(result, "description");
+                
+                user.Division = GetProp(result, "extensionAttribute12");
+                user.Bureau = GetProp(result, "extensionAttribute13");
+                user.Section = GetProp(result, "extensionAttribute14");
+
+                // --- Parsed Logic ---
+                
+                // UserID: "p9643@ftb.ca.gov" -> "p9643"
+                string upn = GetProp(result, "userPrincipalName");
+                user.UserId = !string.IsNullOrEmpty(upn) ? upn.Split('@')[0] : "";
+
+                // SID: Convert Binary to String (S-1-5-21...)
+                if (result.Properties.Contains("objectSid"))
                 {
-                    user.ManagerName = match.Groups[1].Value.Replace("\\", ""); // Remove escape chars
+                    byte[] sidBytes = (byte[])result.Properties["objectSid"][0];
+                    user.Sid = new SecurityIdentifier(sidBytes, 0).ToString();
                 }
 
-                // Extract Manager ID
-                // To get the ID, we technically have to bind to the manager's object. 
-                // This is the C# equivalent of the second Get-ADUser call in your script.
-                user.ManagerId = GetManagerIdFromDn(managerDn);
-            }
+                // PUC: Remove curly braces "{1234}" -> "1234"
+                string rawPuc = GetProp(result, "departmentNumber");
+                user.Puc = rawPuc?.Replace("{", "").Replace("}", "").Trim();
 
-            // --- Status Flags (The Logic we discussed previously) ---
-            
-            // Enabled
-            int uac = (int)result.Properties["userAccountControl"][0];
-            user.Enabled = !((uac & 0x0002) == 0x0002);
-
-            // Locked (Using DirectoryEntry for Native Method is most reliable)
-            using (DirectoryEntry userEntry = result.GetDirectoryEntry())
-            {
-                // Locked
-                user.LockedOut = (bool)userEntry.InvokeGet("IsAccountLocked");
-
-                // Expired (Using the Computed Attribute from the Search Result)
-                user.Expired = CheckExpiry(result);
-            }
-
-            return user;
-        }
-    }
-
-    // Helper to safely get string properties
-    private string GetProp(SearchResult res, string propName)
-    {
-        if (res.Properties.Contains(propName) && res.Properties[propName].Count > 0)
-        {
-            return res.Properties[propName][0].ToString();
-        }
-        return null;
-    }
-
-    // Helper to fetch Manager ID by binding to their DN
-    private string GetManagerIdFromDn(string distinguishedName)
-    {
-        try
-        {
-            // Bind directly to the manager object using the DN we found
-            using (DirectoryEntry mgr = new DirectoryEntry($"LDAP://{distinguishedName}"))
-            {
-                // We assume UserID is the first part of UPN, or you could read sAMAccountName
-                string upn = mgr.Properties["userPrincipalName"].Value?.ToString();
-                if (!string.IsNullOrEmpty(upn))
+                // --- Manager Logic ---
+                string managerDn = GetProp(result, "manager");
+                if (!string.IsNullOrEmpty(managerDn))
                 {
-                    return upn.Split('@')[0];
+                    // 1. Extract Name from DN string (CN=Doe\, John,OU=...)
+                    var match = Regex.Match(managerDn, "CN=([^,]+)");
+                    if (match.Success)
+                    {
+                        user.ManagerName = match.Groups[1].Value.Replace("\\", "");
+                    }
+
+                    // 2. Lookup Manager ID by binding to their object
+                    user.ManagerId = GetManagerIdFromDn(managerDn);
+                }
+
+                // --- Status Flags ---
+                
+                // Enabled (Check bit 0x0002)
+                int uac = (int)result.Properties["userAccountControl"][0];
+                user.Enabled = !((uac & 0x0002) == 0x0002);
+
+                // LockedOut & Expired (Requires DirectoryEntry & Computed Attributes)
+                // We create a temporary entry from the result path to invoke native methods
+                using (DirectoryEntry userEntry = result.GetDirectoryEntry())
+                {
+                    // Native call is more reliable than checking lockoutTime timestamp manually
+                    user.LockedOut = (bool)userEntry.InvokeGet("IsAccountLocked");
+
+                    // Check expiration logic
+                    user.Expired = CheckExpiry(result);
+                }
+
+                // --- Group Membership Logic ---
+                if (result.Properties.Contains("memberOf"))
+                {
+                    foreach (string groupDn in result.Properties["memberOf"])
+                    {
+                        var group = GetGroupDetails(groupDn);
+                        if (group != null)
+                        {
+                            user.Groups.Add(group);
+                        }
+                    }
+                }
+
+                return user;
+            }
+        }
+
+        // =========================================================================
+        // Helper Methods
+        // =========================================================================
+
+        private string GetProp(SearchResult res, string propName)
+        {
+            if (res.Properties.Contains(propName) && res.Properties[propName].Count > 0)
+            {
+                return res.Properties[propName][0].ToString();
+            }
+            return null;
+        }
+
+        private string GetManagerIdFromDn(string distinguishedName)
+        {
+            try
+            {
+                // Bind to the manager's AD object to read their UPN/ID
+                using (DirectoryEntry mgr = new DirectoryEntry($"LDAP://{distinguishedName}"))
+                {
+                    mgr.RefreshCache(new[] { "userPrincipalName" });
+                    string upn = mgr.Properties["userPrincipalName"].Value?.ToString();
+                    
+                    if (!string.IsNullOrEmpty(upn))
+                    {
+                        return upn.Split('@')[0];
+                    }
                 }
             }
+            catch { /* Ignore permission/not found errors */ }
+            return null;
         }
-        catch { /* Handle permissions/not found errors */ }
-        
-        return null;
-    }
 
-    // Helper for Expiry Logic
-    private bool CheckExpiry(SearchResult result)
-    {
-        if (!result.Properties.Contains("msDS-UserPasswordExpiryTimeComputed")) return false;
+        private AdGroup GetGroupDetails(string groupDn)
+        {
+            try
+            {
+                // Bind to the Group object to read Name and Email
+                using (DirectoryEntry groupEntry = new DirectoryEntry($"LDAP://{groupDn}"))
+                {
+                    // RefreshCache is faster than loading the full object
+                    groupEntry.RefreshCache(new[] { "name", "mail" });
 
-        long expiryTicks = (long)result.Properties["msDS-UserPasswordExpiryTimeComputed"][0];
+                    return new AdGroup
+                    {
+                        DistinguishedName = groupDn,
+                        Name = groupEntry.Properties["name"].Value?.ToString(),
+                        Email = groupEntry.Properties["mail"].Value?.ToString()
+                    };
+                }
+            }
+            catch
+            {
+                // If we can't read the group (e.g. Broken DN), return basic info
+                return new AdGroup { DistinguishedName = groupDn, Name = "Unknown/Restricted" };
+            }
+        }
 
-        // 0x7FFFFFFFFFFFFFFF = Never Expires
-        if (expiryTicks == long.MaxValue) return false;
-        
-        // 0 = Must change at next logon (effectively expired)
-        if (expiryTicks == 0) return true;
+        private bool CheckExpiry(SearchResult result)
+        {
+            // This attribute is calculated by the Domain Controller
+            if (!result.Properties.Contains("msDS-UserPasswordExpiryTimeComputed")) return false;
 
-        DateTime expiryDate = DateTime.FromFileTime(expiryTicks);
-        return DateTime.Now > expiryDate;
+            long expiryTicks = (long)result.Properties["msDS-UserPasswordExpiryTimeComputed"][0];
+
+            // AD "Never Expires" magic number
+            if (expiryTicks == long.MaxValue) return false;
+            
+            // AD "Must Change Next Logon" magic number (0)
+            if (expiryTicks == 0) return true;
+
+            DateTime expiryDate = DateTime.FromFileTime(expiryTicks);
+            return DateTime.Now > expiryDate;
+        }
     }
 }
