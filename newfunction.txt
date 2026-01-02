@@ -1,240 +1,54 @@
-using System;
-using System.Collections.Generic;
-using System.DirectoryServices;
-using System.Security.Principal;
-using System.Text.RegularExpressions;
-
-namespace ADService.Models
+public List<AdGroup> GetAdUserGroups(string samAccountName)
 {
-    public class AdUserResult
+    var groups = new System.Collections.Concurrent.ConcurrentBag<AdGroup>();
+
+    using (DirectoryEntry entry = new DirectoryEntry("LDAP://DC=ftb,DC=ca,DC=gov"))
+    using (DirectorySearcher searcher = new DirectorySearcher(entry))
     {
-        // Basic Info
-        public string Name { get; set; }
-        public string UserId { get; set; }        // Parsed from UPN
-        public string EmailAddress { get; set; }
-        public string Title { get; set; }
-        public string Location { get; set; }      // physicalDeliveryOfficeName
-        public string Description { get; set; }
-        
-        // IDs & Codes
-        public string Sid { get; set; }           // Converted from Binary
-        public string Puc { get; set; }           // Parsed from departmentNumber
-        
-        // Organization Structure (Extension Attributes)
-        public string Division { get; set; }      // extensionAttribute12
-        public string Bureau { get; set; }        // extensionAttribute13
-        public string Section { get; set; }       // extensionAttribute14
-        
-        // Account Status
-        public bool Enabled { get; set; }
-        public bool LockedOut { get; set; }
-        public bool Expired { get; set; }         // Calculated from msDS-UserPasswordExpiryTimeComputed
-        
-        // Manager Info
-        public string ManagerName { get; set; }
-        public string ManagerId { get; set; }
-        
-        // Group Memberships
-        public List<AdGroup> Groups { get; set; } = new List<AdGroup>();
+        // 1. Find the user again, but ONLY ask for 'memberOf'
+        searcher.Filter = $"(sAMAccountName={samAccountName})";
+        searcher.PropertiesToLoad.Add("memberOf");
+
+        SearchResult result = searcher.FindOne();
+
+        if (result == null || !result.Properties.Contains("memberOf"))
+        {
+            return new List<AdGroup>();
+        }
+
+        // 2. Get the collection of DNs
+        var groupDns = result.Properties["memberOf"];
+
+        // 3. Parallel Process: Speeds up looking up 50+ groups significantly
+        System.Threading.Tasks.Parallel.ForEach(groupDns.Cast<string>(), groupDn =>
+        {
+            var groupDetail = GetGroupDetails(groupDn);
+            if (groupDetail != null)
+            {
+                groups.Add(groupDetail);
+            }
+        });
     }
 
-    public class AdGroup
-    {
-        public string Name { get; set; }
-        public string Email { get; set; }
-        public string DistinguishedName { get; set; } // Useful for reference
-    }
+    return groups.ToList();
 }
 
-namespace ADService.Services
+
+
+
+
+public async Task LoadUserProfile(string username)
 {
-    using ADService.Models;
+    // 1. Fast Call: Get basic info immediately
+    var userProfile = _adService.GetAdUserDetails(username);
+    
+    // Update UI (e.g. "Welcome, John Doe")
+    StateHasChanged(); 
 
-    public class ActiveDirectoryService
-    {
-        // LDAP Path configuration - Update to match your environment
-        private const string LdapPath = "LDAP://DC=ftb,DC=ca,DC=gov";
+    // 2. Slow Call: Run this in background or show a "Loading Groups..." spinner
+    // We wrap it in Task.Run because DirectoryServices is synchronous/blocking
+    userProfile.Groups = await Task.Run(() => _adService.GetAdUserGroups(username));
 
-        public AdUserResult GetAdUserDetails(string samAccountName)
-        {
-            using (DirectoryEntry entry = new DirectoryEntry(LdapPath))
-            using (DirectorySearcher searcher = new DirectorySearcher(entry))
-            {
-                // 1. Filter by Username
-                searcher.Filter = $"(sAMAccountName={samAccountName})";
-
-                // 2. Explicitly load properties to ensure performance & computed values are available
-                searcher.PropertiesToLoad.AddRange(new[] {
-                    "displayName", "name", "userPrincipalName", "mail", "title", "objectSid",
-                    "departmentNumber",                     // PUC
-                    "extensionAttribute12",                 // Division
-                    "extensionAttribute13",                 // Bureau
-                    "extensionAttribute14",                 // Section
-                    "userAccountControl", "lockoutTime",    // Status
-                    "msDS-UserPasswordExpiryTimeComputed",  // Expiry Calculation
-                    "physicalDeliveryOfficeName",           // Location
-                    "description", 
-                    "manager", 
-                    "memberOf"                              // Groups
-                });
-
-                SearchResult result = searcher.FindOne();
-
-                if (result == null) return null;
-
-                // 3. Build the User Object
-                var user = new AdUserResult();
-
-                // --- Direct String Mappings ---
-                user.Name = GetProp(result, "name");
-                user.EmailAddress = GetProp(result, "mail");
-                user.Title = GetProp(result, "title");
-                user.Location = GetProp(result, "physicalDeliveryOfficeName");
-                user.Description = GetProp(result, "description");
-                
-                user.Division = GetProp(result, "extensionAttribute12");
-                user.Bureau = GetProp(result, "extensionAttribute13");
-                user.Section = GetProp(result, "extensionAttribute14");
-
-                // --- Parsed Logic ---
-                
-                // UserID: "p9643@ftb.ca.gov" -> "p9643"
-                string upn = GetProp(result, "userPrincipalName");
-                user.UserId = !string.IsNullOrEmpty(upn) ? upn.Split('@')[0] : "";
-
-                // SID: Convert Binary to String (S-1-5-21...)
-                if (result.Properties.Contains("objectSid"))
-                {
-                    byte[] sidBytes = (byte[])result.Properties["objectSid"][0];
-                    user.Sid = new SecurityIdentifier(sidBytes, 0).ToString();
-                }
-
-                // PUC: Remove curly braces "{1234}" -> "1234"
-                string rawPuc = GetProp(result, "departmentNumber");
-                user.Puc = rawPuc?.Replace("{", "").Replace("}", "").Trim();
-
-                // --- Manager Logic ---
-                string managerDn = GetProp(result, "manager");
-                if (!string.IsNullOrEmpty(managerDn))
-                {
-                    // 1. Extract Name from DN string (CN=Doe\, John,OU=...)
-                    var match = Regex.Match(managerDn, "CN=([^,]+)");
-                    if (match.Success)
-                    {
-                        user.ManagerName = match.Groups[1].Value.Replace("\\", "");
-                    }
-
-                    // 2. Lookup Manager ID by binding to their object
-                    user.ManagerId = GetManagerIdFromDn(managerDn);
-                }
-
-                // --- Status Flags ---
-                
-                // Enabled (Check bit 0x0002)
-                int uac = (int)result.Properties["userAccountControl"][0];
-                user.Enabled = !((uac & 0x0002) == 0x0002);
-
-                // LockedOut & Expired (Requires DirectoryEntry & Computed Attributes)
-                // We create a temporary entry from the result path to invoke native methods
-                using (DirectoryEntry userEntry = result.GetDirectoryEntry())
-                {
-                    // Native call is more reliable than checking lockoutTime timestamp manually
-                    user.LockedOut = (bool)userEntry.InvokeGet("IsAccountLocked");
-
-                    // Check expiration logic
-                    user.Expired = CheckExpiry(result);
-                }
-
-                // --- Group Membership Logic ---
-                if (result.Properties.Contains("memberOf"))
-                {
-                    foreach (string groupDn in result.Properties["memberOf"])
-                    {
-                        var group = GetGroupDetails(groupDn);
-                        if (group != null)
-                        {
-                            user.Groups.Add(group);
-                        }
-                    }
-                }
-
-                return user;
-            }
-        }
-
-        // =========================================================================
-        // Helper Methods
-        // =========================================================================
-
-        private string GetProp(SearchResult res, string propName)
-        {
-            if (res.Properties.Contains(propName) && res.Properties[propName].Count > 0)
-            {
-                return res.Properties[propName][0].ToString();
-            }
-            return null;
-        }
-
-        private string GetManagerIdFromDn(string distinguishedName)
-        {
-            try
-            {
-                // Bind to the manager's AD object to read their UPN/ID
-                using (DirectoryEntry mgr = new DirectoryEntry($"LDAP://{distinguishedName}"))
-                {
-                    mgr.RefreshCache(new[] { "userPrincipalName" });
-                    string upn = mgr.Properties["userPrincipalName"].Value?.ToString();
-                    
-                    if (!string.IsNullOrEmpty(upn))
-                    {
-                        return upn.Split('@')[0];
-                    }
-                }
-            }
-            catch { /* Ignore permission/not found errors */ }
-            return null;
-        }
-
-        private AdGroup GetGroupDetails(string groupDn)
-        {
-            try
-            {
-                // Bind to the Group object to read Name and Email
-                using (DirectoryEntry groupEntry = new DirectoryEntry($"LDAP://{groupDn}"))
-                {
-                    // RefreshCache is faster than loading the full object
-                    groupEntry.RefreshCache(new[] { "name", "mail" });
-
-                    return new AdGroup
-                    {
-                        DistinguishedName = groupDn,
-                        Name = groupEntry.Properties["name"].Value?.ToString(),
-                        Email = groupEntry.Properties["mail"].Value?.ToString()
-                    };
-                }
-            }
-            catch
-            {
-                // If we can't read the group (e.g. Broken DN), return basic info
-                return new AdGroup { DistinguishedName = groupDn, Name = "Unknown/Restricted" };
-            }
-        }
-
-        private bool CheckExpiry(SearchResult result)
-        {
-            // This attribute is calculated by the Domain Controller
-            if (!result.Properties.Contains("msDS-UserPasswordExpiryTimeComputed")) return false;
-
-            long expiryTicks = (long)result.Properties["msDS-UserPasswordExpiryTimeComputed"][0];
-
-            // AD "Never Expires" magic number
-            if (expiryTicks == long.MaxValue) return false;
-            
-            // AD "Must Change Next Logon" magic number (0)
-            if (expiryTicks == 0) return true;
-
-            DateTime expiryDate = DateTime.FromFileTime(expiryTicks);
-            return DateTime.Now > expiryDate;
-        }
-    }
+    // Update UI again (e.g. Populate the Groups grid)
+    StateHasChanged();
 }
