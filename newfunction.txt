@@ -1,77 +1,19 @@
-private AdGroup GetGroupDetails(string groupDn)
+string managerDn = GetProp(result, "manager");
+if (!string.IsNullOrEmpty(managerDn))
 {
-    try
+    // UPDATED REGEX:
+    // This pattern captures characters that are EITHER:
+    // 1. Not a comma ([^,])
+    // 2. OR an escaped comma (\\,)
+    var match = Regex.Match(managerDn, @"CN=((?:[^,]|\\,)+)");
+    
+    if (match.Success)
     {
-        // 1. Check if this is a "Foreign Security Principal" (Group from another domain)
-        // FSP Distinguished Names always contain "ForeignSecurityPrincipals"
-        if (groupDn.Contains("ForeignSecurityPrincipals"))
-        {
-            // The "Name" (CN) of an FSP is just the SID (e.g. "S-1-5-21-...")
-            // We need to extract that SID and translate it to a real name.
-            var match = Regex.Match(groupDn, "CN=(S-1-[^,]+)");
-            if (match.Success)
-            {
-                string sidString = match.Groups[1].Value;
-                try 
-                {
-                    // Use Windows to translate SID -> "DOMAIN\GroupName"
-                    var sid = new SecurityIdentifier(sidString);
-                    var account = sid.Translate(typeof(NTAccount));
-                    
-                    return new AdGroup 
-                    { 
-                        Name = account.Value, // "CORP\Marketing"
-                        Email = null,         // External groups rarely have local emails
-                        DistinguishedName = groupDn 
-                    };
-                }
-                catch 
-                {
-                    // If translation fails (no trust), return the SID as the name
-                    return new AdGroup { Name = sidString, DistinguishedName = groupDn };
-                }
-            }
-        }
-
-        // 2. Handle Normal Groups
-        using (DirectoryEntry groupEntry = new DirectoryEntry($"LDAP://{groupDn}"))
-        {
-            // Load 'mail' AND 'proxyAddresses' (for backup)
-            groupEntry.RefreshCache(new[] { "name", "mail", "proxyAddresses" });
-
-            string name = groupEntry.Properties["name"].Value?.ToString();
-            string email = groupEntry.Properties["mail"].Value?.ToString();
-
-            // 3. Fallback: If 'mail' is empty, check 'proxyAddresses' for an SMTP address
-            if (string.IsNullOrEmpty(email) && groupEntry.Properties["proxyAddresses"].Count > 0)
-            {
-                foreach (string proxy in groupEntry.Properties["proxyAddresses"])
-                {
-                    // Look for the primary SMTP address (starts with capital SMTP:)
-                    if (proxy.StartsWith("SMTP:"))
-                    {
-                        email = proxy.Substring(5);
-                        break;
-                    }
-                    // Or first lowercase smtp: found
-                    if (string.IsNullOrEmpty(email) && proxy.StartsWith("smtp:"))
-                    {
-                        email = proxy.Substring(5);
-                    }
-                }
-            }
-
-            return new AdGroup
-            {
-                DistinguishedName = groupDn,
-                Name = name,
-                Email = email // Will be null if strictly a Security Group
-            };
-        }
+        // match.Groups[1] will contain "Lastname\, Firstname"
+        // We replace "\\" with empty string to make it "Lastname, Firstname"
+        user.ManagerName = match.Groups[1].Value.Replace("\\", "");
     }
-    catch
-    {
-        // If the group is deleted or permission denied
-        return new AdGroup { DistinguishedName = groupDn, Name = "Restricted/Unknown" };
-    }
+
+    // Lookup Manager ID (This remains the same)
+    user.ManagerId = GetManagerIdFromDn(managerDn);
 }
