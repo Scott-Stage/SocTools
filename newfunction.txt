@@ -1,1 +1,145 @@
-var match = Regex.Match(managerDn, @"CN=((?:[^,\\]|\\.)+)");
+Integration Functional Requirements
+Project: SCRPortal + SocTools Bi-Directional Synchronization
+Date: January 12, 2026
+Version: 1.1 (Detailed)
+
+1. Overview
+The goal of this integration is to automate the flow of security assessments and remediation tracking for server certification.
+SCRPortal will be the System of Record (Source of Truth) for case data, assets, vulnerability records, and status decisions.
+SocTools is the enrichment engine that retrieves scope from SCRPortal, runs scans (Tenable SC), parses results, and writes technical findings back to SCRPortal.
+
+2. Objectives
+- Maintain a living record of vulnerability data, remediation status, installed applications, insecure ports, and scan metadata within SCRPortal.
+- Support reconciliation between the latest scan results and the existing SCRPortal record to identify new, remediated, and unchanged findings.
+- Enable admins to review findings in SCRPortal, track remediation progress, and request rescans.
+- Ensure all certification and resolution decisions are logged and stored in SCRPortal.
+
+3. Integration Workflow
+The integration must support the following lifecycle:
+a) Notification (Push): When a case is created or updated in SCRPortal, it must notify SocTools immediately so the scan process can begin.
+b) Scope Retrieval (Pull): SocTools must retrieve the case definition (assets, scope, target metadata) from SCRPortal.
+c) State Retrieval (Pull): Before updates, SocTools must fetch the current state of the case, assets, and vulnerability records to avoid overwriting user-entered data.
+d) Result Synchronization (Push): SocTools pushes the consolidated list of vulnerabilities, status updates, analyst notes, and scan metadata back to SCRPortal.
+e) Remediation Tracking (Push): As findings are resolved, SocTools updates resolution status in SCRPortal.
+f) Certification Actions (Push): When a device is certified or decertified, SocTools updates SCRPortal and logs the action.
+
+
+4. Data Ownership & Field Governance
+To prevent data conflicts, specific systems are designated as the owner of specific data points. Each respective app should respect these boundaries.
+
+| Data Domain          | Specific Fields                                                     | Owner (Write Access)      | Consumer (Read Only) |
+| -------------------- | ------------------------------------------------------------------- | ------------------------- | -------------------- |
+| Ticket Scope         | Ticket ID, Asset List, Zones, Target Metadata                       | SCRPortal                 | SocTools             |
+| Vulnerability Data   | Plugin ID, Name, Severity, Port/Protocol, Installed SW, etc.        | SocTools (Automated)      | SCRPortal            |
+| Admin Context        | Admin Notes                                                         | SCRPortal (Server Admins) | SocTools             |
+| SOC Analysis         | SOC Notes                                                           | SocTools (Analysts)       | SCRPortal            |
+| Certification Status | Certified/Not Certified, Cert Date, Decision Notes                  | SocTools (Analysts)       | SCRPortal            |
+
+Requirement: The SCRPortal API should allow SocTools to update Vulnerability Data and SOC Notes while strictly preserving Admin Notes and Risk Acceptance fields.
+
+5. Functional Capabilities Required
+
+5.1. Event Notification (Webhooks)
+SCRPortal must provide webhooks for external integrations.
+Requirement: Configure webhooks for Case Created, Case Updated, Rescan Requested, and Asset Scope Updated.
+Payload: Must contain the unique Case Identifier and basic routing fields (environment, tenant, org).
+
+5.2. Case and Asset Retrieval Interface
+SocTools requires an interface to read case metadata and assets.
+Requirement: Endpoint to retrieve asset lists structured as individual objects (IP/Hostname/FQDN), not free-text strings.
+Requirement: Assets must include hostname, environment/zone, OS, function, repository, and any owner/contact fields available.
+
+5.3. Vulnerability Management Interface (Upsert / Reconcile)
+SocTools requires an interface to manage vulnerabilities for each asset.
+Requirement: The API must support a "Full Replace" strategy per asset or per scan.
+- If a vulnerability is missing from the payload, SCRPortal should mark it Resolved (not delete) with a resolution reason and timestamp.
+- If a vulnerability is new, SCRPortal should create it with status Unresolved.
+- If a vulnerability exists, SCRPortal should update evidence, severity, and status as provided.
+Requirement: Uniqueness must be defined by a composite key (Case ID + Hostname + Plugin ID).
+Requirement: The API must support idempotency (idempotency key on write) to avoid duplicate records.
+
+5.4. Vulnerability Status Model
+SCRPortal must support a consistent status lifecycle:
+- Open
+- In Progress
+- Resolved
+- Risk Accepted
+- False Positive
+Requirement: Status changes must be logged with timestamp, actor, and reason.
+Requirement: SocTools can set Resolved or In Progress based on scan deltas. Admins must not set Risk Accepted or False Positive; they provide supporting notes in Admin Notes for the SOC to review.
+Requirement: SOC analysts are responsible for determining and setting Risk Accepted or False Positive based on Admin Notes and supporting evidence.
+
+5.5. Installed Applications and Insecure Ports
+Requirement: SCRPortal must allow storage of:
+- Installed applications discovered per asset
+- Open/insecure ports per asset
+- OS fingerprint and version per asset
+Requirement: SocTools must be able to upsert these records per asset.
+
+5.6. Evidence and Attachments
+Requirement: Vulnerability records must support evidence text, plugin output, or references.
+Requirement: If file uploads are supported, the API must allow optional evidence attachments with size limits and retention rules.
+
+5.7. Case and Asset Status
+Requirement: SCRPortal must allow SocTools to mark assets as Certified/Not Certified with a decision timestamp and decision notes.
+Requirement: Certification decisions must be auditable and retained as the final source of truth in SCRPortal.
+
+6. API Design Requirements
+
+6.1. Authentication and Authorization
+Requirement: API must support secure authentication (API keys or OAuth2).
+Requirement: API access must be scoped to tenant or org and logged.
+
+6.2. Versioning and Schema
+Requirement: API endpoints must be versioned (e.g., /api/v1).
+Requirement: SCRPortal must publish a schema or OpenAPI contract for integration stability.
+
+6.3. Error Handling and Validation
+Requirement: All endpoints must return consistent error objects with codes and field-level validation errors.
+Requirement: The API must reject invalid payloads without partial writes unless explicitly indicated as partial success.
+
+6.4. Pagination and Filtering
+Requirement: List endpoints must support pagination and filtering (case status, asset status, severity, date ranges).
+
+6.5. Concurrency and Conflict Handling
+Requirement: Support optimistic concurrency (ETag or updated_at) to prevent overwriting admin edits.
+Requirement: SocTools must provide the last-known updated timestamp when writing back.
+
+7. Data Model Requirements (Minimum Fields)
+
+7.1. Case
+- Case ID (unique)
+- Status (Open/In Review/Closed)
+- Environment/Zone
+- Created/Updated timestamps
+
+7.2. Asset
+- Hostname (unique)
+- IP, Hostname, FQDN
+- OS, Function, Repository
+- Owner/Team
+- Certification Status + Date
+
+7.3. Vulnerability
+- Plugin ID (unique key as defined above)
+- Plugin ID, Name, Severity, CVE, CVSS
+- Port, Protocol
+- First Seen, Last Seen
+- Status, Status Updated By, Status Updated At
+- Evidence/Plugin Output
+
+7.4. Scan
+- Scan ID, Date, Scanner, Policy
+- Target List
+
+8. Reporting and Audit
+Requirement: All status changes, certification actions, and admin edits must be logged with timestamps and actor.
+Requirement: SOC updates must not overwrite Admin Notes; both must be retained.
+
+9. Rescan and Delta Logic
+Requirement: When a rescan is requested, SocTools will retrieve the existing vulnerability list from SCRPortal and compare it to the latest scan.
+Requirement: SocTools will classify findings as New, Persisting, or Resolved and update SCRPortal accordingly.
+Requirement: SCRPortal must store the latest status and maintain historical changes.
+
+10. Non-Functional Requirements
+- Retention: SCRPortal must retain historical vulnerability status transitions and certification actions.
