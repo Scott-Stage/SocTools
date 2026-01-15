@@ -1,1 +1,3 @@
-<script src="ACL%20Parser/acl-parser.js"></script>
+@using System.Text
+@using System.Net
+@using Microsoft.AspNetCore.Components.Web
