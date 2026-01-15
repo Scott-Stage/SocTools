@@ -1,11 +1,1 @@
-window.aclParser = {
-    getRelativePaths: function (input) {
-        if (!input || !input.files) {
-            return [];
-        }
-
-        return Array.from(input.files).map(function (file) {
-            return file.webkitRelativePath || file.name;
-        });
-    }
-};
+<script src="@Assets["ACL Parser/acl-parser.js"]"></script>
