@@ -1,145 +1,437 @@
-Integration Functional Requirements
-Project: SCRPortal + SocTools Bi-Directional Synchronization
-Date: January 12, 2026
-Version: 1.1 (Detailed)
+@page "/acl-parser"
 
-1. Overview
-The goal of this integration is to automate the flow of security assessments and remediation tracking for server certification.
-SCRPortal will be the System of Record (Source of Truth) for case data, assets, vulnerability records, and status decisions.
-SocTools is the enrichment engine that retrieves scope from SCRPortal, runs scans (Tenable SC), parses results, and writes technical findings back to SCRPortal.
+<PageTitle>ACL Parser</PageTitle>
 
-2. Objectives
-- Maintain a living record of vulnerability data, remediation status, installed applications, insecure ports, and scan metadata within SCRPortal.
-- Support reconciliation between the latest scan results and the existing SCRPortal record to identify new, remediated, and unchanged findings.
-- Enable admins to review findings in SCRPortal, track remediation progress, and request rescans.
-- Ensure all certification and resolution decisions are logged and stored in SCRPortal.
+<MudContainer MaxWidth="MaxWidth.False" Class="py-6 acl-parser-page">
+    <MudStack Spacing="3">
+        <MudPaper Elevation="2" Class="p-4">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.h5" Class="font-weight-bold">Cisco ACL Parser</MudText>
+                <MudText Typo="Typo.body2" Class="text-secondary">
+                    Drop a Cisco ACL config file to extract source, destination, protocol, and rule metadata.
+                </MudText>
+                <div class="acl-drop-zone">
+                    <InputFile OnChange="HandleFileSelected" class="acl-drop-input" accept=".txt,.cfg,.conf,.acl" />
+                    <div class="acl-drop-content">
+                        <MudText Typo="Typo.subtitle1" Class="font-weight-bold">Drag &amp; drop a config file</MudText>
+                        <MudText Typo="Typo.caption" Class="text-secondary">or click to browse</MudText>
+                        @if (!string.IsNullOrWhiteSpace(UploadedFileName))
+                        {
+                            <MudChip T="string" Color="Color.Primary" Variant="Variant.Outlined">
+                                @UploadedFileName
+                            </MudChip>
+                        }
+                    </div>
+                </div>
+                @if (IsLoading)
+                {
+                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+                }
+                else if (Entries.Count > 0)
+                {
+                    <MudStack Direction="Row" Spacing="2" AlignItems="AlignItems.Center">
+                        <MudChip T="string" Color="Color.Info" Variant="Variant.Filled">Entries: @Entries.Count</MudChip>
+                        <MudChip T="string" Color="Color.Success" Variant="Variant.Filled">Permits: @Entries.Count(e => e.Action == "permit")</MudChip>
+                        <MudChip T="string" Color="Color.Error" Variant="Variant.Filled">Denies: @Entries.Count(e => e.Action == "deny")</MudChip>
+                        <MudChip T="string" Color="Color.Default" Variant="Variant.Filled">Remarks: @Entries.Count(e => e.Action == "remark")</MudChip>
+                        @if (UploadedAt is not null)
+                        {
+                            <MudText Typo="Typo.caption" Class="text-secondary">
+                                Parsed @UploadedAt.Value.ToString("g")
+                            </MudText>
+                        }
+                    </MudStack>
+                }
+                @if (ParseWarnings.Count > 0)
+                {
+                    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
+                        @foreach (var warning in ParseWarnings)
+                        {
+                            <div>@warning</div>
+                        }
+                    </MudAlert>
+                }
+            </MudStack>
+        </MudPaper>
 
-3. Integration Workflow
-The integration must support the following lifecycle:
-a) Notification (Push): When a case is created or updated in SCRPortal, it must notify SocTools immediately so the scan process can begin.
-b) Scope Retrieval (Pull): SocTools must retrieve the case definition (assets, scope, target metadata) from SCRPortal.
-c) State Retrieval (Pull): Before updates, SocTools must fetch the current state of the case, assets, and vulnerability records to avoid overwriting user-entered data.
-d) Result Synchronization (Push): SocTools pushes the consolidated list of vulnerabilities, status updates, analyst notes, and scan metadata back to SCRPortal.
-e) Remediation Tracking (Push): As findings are resolved, SocTools updates resolution status in SCRPortal.
-f) Certification Actions (Push): When a device is certified or decertified, SocTools updates SCRPortal and logs the action.
+        <MudPaper Elevation="2" Class="p-4">
+            <MudTable Items="Entries" Dense="true" Hover="true" Striped="true" RowClassFunc="GetRowClass">
+                <HeaderContent>
+                    <MudTh>#</MudTh>
+                    <MudTh>ACL</MudTh>
+                    <MudTh>Action</MudTh>
+                    <MudTh>Protocol</MudTh>
+                    <MudTh>Source</MudTh>
+                    <MudTh>Src Port</MudTh>
+                    <MudTh>Destination</MudTh>
+                    <MudTh>Dst Port</MudTh>
+                    <MudTh>Comment</MudTh>
+                    <MudTh>Options</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="#">@context.LineNumber</MudTd>
+                    <MudTd DataLabel="ACL">@context.AclName</MudTd>
+                    <MudTd DataLabel="Action">
+                        <MudChip T="string" Color="@GetActionColor(context.Action)" Variant="Variant.Filled" Size="Size.Small">
+                            @context.Action
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Protocol">@context.Protocol</MudTd>
+                    <MudTd DataLabel="Source">@context.Source</MudTd>
+                    <MudTd DataLabel="Src Port">@context.SourcePort</MudTd>
+                    <MudTd DataLabel="Destination">@context.Destination</MudTd>
+                    <MudTd DataLabel="Dst Port">@context.DestinationPort</MudTd>
+                    <MudTd DataLabel="Comment">@context.Comment</MudTd>
+                    <MudTd DataLabel="Options">@context.Options</MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body2" Class="text-secondary">Upload a config to see parsed ACL rules.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        </MudPaper>
+    </MudStack>
+</MudContainer>
 
+<style>
+    .acl-drop-zone {
+        position: relative;
+        border: 2px dashed rgba(0, 0, 0, 0.2);
+        border-radius: 12px;
+        padding: 24px;
+        min-height: 140px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, rgba(233, 243, 255, 0.7), rgba(255, 250, 230, 0.7));
+    }
 
-4. Data Ownership & Field Governance
-To prevent data conflicts, specific systems are designated as the owner of specific data points. Each respective app should respect these boundaries.
+    .acl-drop-input {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
+    }
 
-| Data Domain          | Specific Fields                                                     | Owner (Write Access)      | Consumer (Read Only) |
-| -------------------- | ------------------------------------------------------------------- | ------------------------- | -------------------- |
-| Ticket Scope         | Ticket ID, Asset List, Zones, Target Metadata                       | SCRPortal                 | SocTools             |
-| Vulnerability Data   | Plugin ID, Name, Severity, Port/Protocol, Installed SW, etc.        | SocTools (Automated)      | SCRPortal            |
-| Admin Context        | Admin Notes                                                         | SCRPortal (Server Admins) | SocTools             |
-| SOC Analysis         | SOC Notes                                                           | SocTools (Analysts)       | SCRPortal            |
-| Certification Status | Certified/Not Certified, Cert Date, Decision Notes                  | SocTools (Analysts)       | SCRPortal            |
+    .acl-drop-content {
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: center;
+    }
 
-Requirement: The SCRPortal API should allow SocTools to update Vulnerability Data and SOC Notes while strictly preserving Admin Notes and Risk Acceptance fields.
+    .acl-row-deny {
+        background-color: rgba(244, 67, 54, 0.08);
+    }
 
-5. Functional Capabilities Required
+    .acl-row-remark {
+        background-color: rgba(158, 158, 158, 0.08);
+    }
+</style>
 
-5.1. Event Notification (Webhooks)
-SCRPortal must provide webhooks for external integrations.
-Requirement: Configure webhooks for Case Created, Case Updated, Rescan Requested, and Asset Scope Updated.
-Payload: Must contain the unique Case Identifier and basic routing fields (environment, tenant, org).
+@code {
+    private readonly List<AclEntry> Entries = new();
+    private readonly List<string> ParseWarnings = new();
+    private string? UploadedFileName;
+    private DateTime? UploadedAt;
+    private bool IsLoading;
 
-5.2. Case and Asset Retrieval Interface
-SocTools requires an interface to read case metadata and assets.
-Requirement: Endpoint to retrieve asset lists structured as individual objects (IP/Hostname/FQDN), not free-text strings.
-Requirement: Assets must include hostname, environment/zone, OS, function, repository, and any owner/contact fields available.
+    private async Task HandleFileSelected(InputFileChangeEventArgs args)
+    {
+        var file = args.File;
+        if (file is null)
+        {
+            return;
+        }
 
-5.3. Vulnerability Management Interface (Upsert / Reconcile)
-SocTools requires an interface to manage vulnerabilities for each asset.
-Requirement: The API must support a "Full Replace" strategy per asset or per scan.
-- If a vulnerability is missing from the payload, SCRPortal should mark it Resolved (not delete) with a resolution reason and timestamp.
-- If a vulnerability is new, SCRPortal should create it with status Unresolved.
-- If a vulnerability exists, SCRPortal should update evidence, severity, and status as provided.
-Requirement: Uniqueness must be defined by a composite key (Case ID + Hostname + Plugin ID).
-Requirement: The API must support idempotency (idempotency key on write) to avoid duplicate records.
+        IsLoading = true;
+        ParseWarnings.Clear();
+        Entries.Clear();
 
-5.4. Vulnerability Status Model
-SCRPortal must support a consistent status lifecycle:
-- Open
-- In Progress
-- Resolved
-- Risk Accepted
-- False Positive
-Requirement: Status changes must be logged with timestamp, actor, and reason.
-Requirement: SocTools can set Resolved or In Progress based on scan deltas. Admins must not set Risk Accepted or False Positive; they provide supporting notes in Admin Notes for the SOC to review.
-Requirement: SOC analysts are responsible for determining and setting Risk Accepted or False Positive based on Admin Notes and supporting evidence.
+        try
+        {
+            await using var stream = file.OpenReadStream(maxAllowedSize: 10_000_000);
+            using var reader = new StreamReader(stream);
+            var content = await reader.ReadToEndAsync();
 
-5.5. Installed Applications and Insecure Ports
-Requirement: SCRPortal must allow storage of:
-- Installed applications discovered per asset
-- Open/insecure ports per asset
-- OS fingerprint and version per asset
-Requirement: SocTools must be able to upsert these records per asset.
+            UploadedFileName = file.Name;
+            UploadedAt = DateTime.Now;
+            Entries.AddRange(ParseAcl(content));
+        }
+        catch (Exception ex)
+        {
+            ParseWarnings.Add($"Unable to parse file: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
 
-5.6. Evidence and Attachments
-Requirement: Vulnerability records must support evidence text, plugin output, or references.
-Requirement: If file uploads are supported, the API must allow optional evidence attachments with size limits and retention rules.
+    private IEnumerable<AclEntry> ParseAcl(string content)
+    {
+        var results = new List<AclEntry>();
+        var lines = content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+        string? currentAclName = null;
+        var inNamedAcl = false;
 
-5.7. Case and Asset Status
-Requirement: SCRPortal must allow SocTools to mark assets as Certified/Not Certified with a decision timestamp and decision notes.
-Requirement: Certification decisions must be auditable and retained as the final source of truth in SCRPortal.
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var rawLine = lines[i];
+            var lineNumber = i + 1;
+            var trimmed = rawLine.Trim();
 
-6. API Design Requirements
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                continue;
+            }
 
-6.1. Authentication and Authorization
-Requirement: API must support secure authentication (API keys or OAuth2).
-Requirement: API access must be scoped to tenant or org and logged.
+            if (trimmed.StartsWith("!", StringComparison.Ordinal) || trimmed.StartsWith("#", StringComparison.Ordinal))
+            {
+                continue;
+            }
 
-6.2. Versioning and Schema
-Requirement: API endpoints must be versioned (e.g., /api/v1).
-Requirement: SCRPortal must publish a schema or OpenAPI contract for integration stability.
+            var tokens = Tokenize(trimmed);
+            if (tokens.Length == 0)
+            {
+                continue;
+            }
 
-6.3. Error Handling and Validation
-Requirement: All endpoints must return consistent error objects with codes and field-level validation errors.
-Requirement: The API must reject invalid payloads without partial writes unless explicitly indicated as partial success.
+            if (tokens.Length >= 3 &&
+                tokens[0].Equals("ip", StringComparison.OrdinalIgnoreCase) &&
+                tokens[1].Equals("access-list", StringComparison.OrdinalIgnoreCase))
+            {
+                if (tokens.Length >= 4)
+                {
+                    currentAclName = tokens[3];
+                    inNamedAcl = true;
+                }
 
-6.4. Pagination and Filtering
-Requirement: List endpoints must support pagination and filtering (case status, asset status, severity, date ranges).
+                continue;
+            }
 
-6.5. Concurrency and Conflict Handling
-Requirement: Support optimistic concurrency (ETag or updated_at) to prevent overwriting admin edits.
-Requirement: SocTools must provide the last-known updated timestamp when writing back.
+            if (tokens[0].Equals("exit", StringComparison.OrdinalIgnoreCase) ||
+                tokens[0].Equals("end", StringComparison.OrdinalIgnoreCase))
+            {
+                currentAclName = null;
+                inNamedAcl = false;
+                continue;
+            }
 
-7. Data Model Requirements (Minimum Fields)
+            var entry = TryParseAclEntry(tokens, lineNumber, trimmed, currentAclName, inNamedAcl);
+            if (entry is null)
+            {
+                if (LooksLikeAclLine(tokens))
+                {
+                    ParseWarnings.Add($"Line {lineNumber}: Unrecognized ACL syntax.");
+                }
+                continue;
+            }
 
-7.1. Case
-- Case ID (unique)
-- Status (Open/In Review/Closed)
-- Environment/Zone
-- Created/Updated timestamps
+            results.Add(entry);
+        }
 
-7.2. Asset
-- Hostname (unique)
-- IP, Hostname, FQDN
-- OS, Function, Repository
-- Owner/Team
-- Certification Status + Date
+        return results;
+    }
 
-7.3. Vulnerability
-- Plugin ID (unique key as defined above)
-- Plugin ID, Name, Severity, CVE, CVSS
-- Port, Protocol
-- First Seen, Last Seen
-- Status, Status Updated By, Status Updated At
-- Evidence/Plugin Output
+    private static string[] Tokenize(string line)
+    {
+        return line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    }
 
-7.4. Scan
-- Scan ID, Date, Scanner, Policy
-- Target List
+    private static bool LooksLikeAclLine(string[] tokens)
+    {
+        if (tokens.Length == 0)
+        {
+            return false;
+        }
 
-8. Reporting and Audit
-Requirement: All status changes, certification actions, and admin edits must be logged with timestamps and actor.
-Requirement: SOC updates must not overwrite Admin Notes; both must be retained.
+        if (tokens[0].Equals("access-list", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
 
-9. Rescan and Delta Logic
-Requirement: When a rescan is requested, SocTools will retrieve the existing vulnerability list from SCRPortal and compare it to the latest scan.
-Requirement: SocTools will classify findings as New, Persisting, or Resolved and update SCRPortal accordingly.
-Requirement: SCRPortal must store the latest status and maintain historical changes.
+        var action = tokens[0];
+        return IsActionToken(action) || action.Equals("remark", StringComparison.OrdinalIgnoreCase);
+    }
 
-10. Non-Functional Requirements
-- Retention: SCRPortal must retain historical vulnerability status transitions and certification actions.
+    private static AclEntry? TryParseAclEntry(string[] tokens, int lineNumber, string raw, string? currentAclName, bool inNamedAcl)
+    {
+        var index = 0;
+        var aclName = currentAclName;
+
+        if (tokens[0].Equals("access-list", StringComparison.OrdinalIgnoreCase))
+        {
+            if (tokens.Length < 3)
+            {
+                return null;
+            }
+
+            aclName = tokens[1];
+            index = 2;
+        }
+        else if (!IsActionToken(tokens[0]) && !tokens[0].Equals("remark", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!inNamedAcl)
+            {
+                return null;
+            }
+
+            index = 0;
+        }
+
+        if (index >= tokens.Length)
+        {
+            return null;
+        }
+
+        var action = tokens[index].ToLowerInvariant();
+        if (action == "remark")
+        {
+            var comment = string.Join(' ', tokens.Skip(index + 1));
+            return new AclEntry(lineNumber, raw, aclName ?? string.Empty, action, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, comment);
+        }
+
+        if (!IsActionToken(action))
+        {
+            return null;
+        }
+
+        index++;
+        var protocol = index < tokens.Length ? tokens[index].ToLowerInvariant() : "ip";
+        index++;
+
+        var (source, afterSource) = ParseAddress(tokens, index);
+        index = afterSource;
+
+        var (sourcePort, afterSourcePort) = ParsePort(tokens, index);
+        if (afterSourcePort != index)
+        {
+            index = afterSourcePort;
+        }
+
+        var (destination, afterDestination) = ParseAddress(tokens, index);
+        index = afterDestination;
+
+        var (destinationPort, afterDestinationPort) = ParsePort(tokens, index);
+        if (afterDestinationPort != index)
+        {
+            index = afterDestinationPort;
+        }
+
+        var options = index < tokens.Length ? string.Join(' ', tokens.Skip(index)) : string.Empty;
+
+        return new AclEntry(lineNumber, raw, aclName ?? string.Empty, action, protocol, source, sourcePort, destination, destinationPort, options, string.Empty);
+    }
+
+    private static (string Value, int NextIndex) ParseAddress(string[] tokens, int start)
+    {
+        if (start >= tokens.Length)
+        {
+            return (string.Empty, start);
+        }
+
+        var token = tokens[start];
+        if (token.Equals("any", StringComparison.OrdinalIgnoreCase))
+        {
+            return ("any", start + 1);
+        }
+
+        if (token.Equals("host", StringComparison.OrdinalIgnoreCase) && start + 1 < tokens.Length)
+        {
+            return ($"host {tokens[start + 1]}", start + 2);
+        }
+
+        if ((token.Equals("object", StringComparison.OrdinalIgnoreCase) ||
+             token.Equals("object-group", StringComparison.OrdinalIgnoreCase) ||
+             token.Equals("interface", StringComparison.OrdinalIgnoreCase)) &&
+            start + 1 < tokens.Length)
+        {
+            return ($"{token} {tokens[start + 1]}", start + 2);
+        }
+
+        if (LooksLikeIp(token) && start + 1 < tokens.Length && LooksLikeIp(tokens[start + 1]))
+        {
+            return ($"{token} {tokens[start + 1]}", start + 2);
+        }
+
+        if (token.Contains('/', StringComparison.Ordinal))
+        {
+            return (token, start + 1);
+        }
+
+        return (token, start + 1);
+    }
+
+    private static (string Value, int NextIndex) ParsePort(string[] tokens, int start)
+    {
+        if (start >= tokens.Length)
+        {
+            return (string.Empty, start);
+        }
+
+        var token = tokens[start].ToLowerInvariant();
+        if (token is "eq" or "gt" or "lt" or "neq")
+        {
+            return start + 1 < tokens.Length
+                ? ($"{token} {tokens[start + 1]}", start + 2)
+                : (token, start + 1);
+        }
+
+        if (token == "range")
+        {
+            return start + 2 < tokens.Length
+                ? ($"{token} {tokens[start + 1]} {tokens[start + 2]}", start + 3)
+                : (token, start + 1);
+        }
+
+        return (string.Empty, start);
+    }
+
+    private static bool IsActionToken(string token)
+    {
+        return token.Equals("permit", StringComparison.OrdinalIgnoreCase) ||
+               token.Equals("deny", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksLikeIp(string token)
+    {
+        return System.Net.IPAddress.TryParse(token, out _);
+    }
+
+    private static Color GetActionColor(string action)
+    {
+        return action switch
+        {
+            "permit" => Color.Success,
+            "deny" => Color.Error,
+            "remark" => Color.Default,
+            _ => Color.Info
+        };
+    }
+
+    private static string GetRowClass(AclEntry entry, int index)
+    {
+        return entry.Action switch
+        {
+            "deny" => "acl-row-deny",
+            "remark" => "acl-row-remark",
+            _ => string.Empty
+        };
+    }
+
+    private sealed record AclEntry(
+        int LineNumber,
+        string Raw,
+        string AclName,
+        string Action,
+        string Protocol,
+        string Source,
+        string SourcePort,
+        string Destination,
+        string DestinationPort,
+        string Options,
+        string Comment);
+}
