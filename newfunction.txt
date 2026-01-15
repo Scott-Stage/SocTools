@@ -1,3 +1,9 @@
-@using System.Text
-@using System.Net
-@using Microsoft.AspNetCore.Components.Web
+export function getRelativePaths(input) {
+    if (!input || !input.files) {
+        return [];
+    }
+
+    return Array.from(input.files).map(function (file) {
+        return file.webkitRelativePath || file.name;
+    });
+}
