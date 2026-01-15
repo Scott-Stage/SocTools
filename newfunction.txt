@@ -1,1 +1,1 @@
-<script src="@Assets["ACL Parser/acl-parser.js"]"></script>
+<script src="ACL%20Parser/acl-parser.js"></script>
