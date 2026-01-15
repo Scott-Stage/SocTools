@@ -1,9 +1,1976 @@
-export function getRelativePaths(input) {
-    if (!input || !input.files) {
-        return [];
+<MudContainer MaxWidth="MaxWidth.False" Class="py-6 acl-parser-page">
+    <MudGrid GutterSize="3">
+        <MudItem xs="12" md="3" lg="2">
+            <MudPaper Elevation="2" Class="p-4">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.h5" Class="font-weight-bold">Cisco ACL Parser</MudText>
+                <MudText Typo="Typo.body2" Class="text-secondary">
+                    Drop a Cisco ACL config file to extract source, destination, protocol, and rule metadata.
+                </MudText>
+                <MudStack Spacing="2" Class="acl-upload-stack">
+                    <div class="acl-drop-zone">
+                        <InputFile @ref="FolderInput"
+                                   OnChange="HandleFolderSelected"
+                                   class="acl-drop-input"
+                                   accept=".log,.txt,.cfg,.conf,.acl"
+                                   multiple
+                                   webkitdirectory />
+                        <div class="acl-drop-content">
+                            <MudIcon Icon="@Icons.Material.Filled.FolderOpen" Class="acl-drop-icon" />
+                            <MudText Typo="Typo.h6" Class="font-weight-bold">Choose a log folder</MudText>
+                            <MudText Typo="Typo.subtitle2" Class="acl-drop-hint">Drag a folder here or click to browse</MudText>
+                        </div>
+                    </div>
+                    <MudPaper Elevation="0" Class="acl-file-panel">
+                        <MudStack Spacing="1">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                                <MudText Typo="Typo.subtitle2" Class="font-weight-bold">Log files</MudText>
+                                @if (LogFiles.Count > 0)
+                                {
+                                    <MudChip T="string" Variant="Variant.Outlined" Size="Size.Small">
+                                        @LogFiles.Count
+                                    </MudChip>
+                                }
+                            </MudStack>
+                            @if (LogFileTree.Count > 0)
+                            {
+                                <MudList T="LogTreeNode" Dense="true" Class="acl-file-tree">
+                                    @RenderLogTree(LogFileTree, 0)
+                                </MudList>
+                            }
+                            else if (LogFiles.Count > 0)
+                            {
+                                <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
+                                    Unable to render folder tree. Showing flat file list instead.
+                                </MudAlert>
+                                <MudList T="LogFileEntry" Dense="true" Class="acl-file-tree">
+                                    @foreach (var file in LogFiles)
+                                    {
+                                        <MudListItem T="LogFileEntry"
+                                                     OnClick="@(() => SelectLogFile(file))"
+                                                     Class="@(UploadedFileName == file.DisplayName ? "acl-file-active" : string.Empty)">
+                                            <MudText Typo="Typo.body2">@file.RelativePath</MudText>
+                                        </MudListItem>
+                                    }
+                                </MudList>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.caption" Class="text-secondary">
+                                    Select a folder to list available .log files.
+                                </MudText>
+                            }
+                        </MudStack>
+                    </MudPaper>
+                </MudStack>
+                @if (IsLoading)
+                {
+                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+                }
+                else if (Entries.Count > 0)
+                {
+                }
+                @if (ParseWarnings.Count > 0)
+                {
+                    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
+                        @foreach (var warning in ParseWarnings)
+                        {
+                            <div>@warning</div>
+                        }
+                    </MudAlert>
+                }
+            </MudStack>
+        </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="9" lg="10" Class="acl-right-column">
+            <MudStack Spacing="3" Class="acl-right-stack">
+                <MudPaper Elevation="2" Class="p-4 acl-panel acl-panel-scroll">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="acl-rules-header">
+                        <MudText Typo="Typo.subtitle1" Class="font-weight-bold">Rules</MudText>
+                        @if (Entries.Count > 0)
+                        {
+                            <MudPaper Elevation="0" Class="acl-violation-summary">
+                                <MudStack Spacing="1">
+                                    <MudText Typo="Typo.caption" Class="font-weight-bold">Violation Summary</MudText>
+                                    <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                                        <MudChip T="string" Color="Color.Warning" Variant="Variant.Outlined" Size="Size.Small">
+                                            <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+                                                <MudText Typo="Typo.caption">Any</MudText>
+                                                <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" />
+                                                <MudText Typo="Typo.caption">Any: @AnyAnyViolationCount</MudText>
+                                            </MudStack>
+                                        </MudChip>
+                                        <MudChip T="string" Color="Color.Warning" Variant="Variant.Outlined" Size="Size.Small">
+                                            Cross-zone: @CrossZoneViolationCount
+                                        </MudChip>
+                                        <MudChip T="string" Color="Color.Warning" Variant="Variant.Outlined" Size="Size.Small">
+                                            Over-permissive: @OverPermissiveViolationCount
+                                        </MudChip>
+                                    </MudStack>
+                                </MudStack>
+                            </MudPaper>
+                        }
+                    </MudStack>
+                    <div class="acl-table-scroll">
+                        <MudTable Items="Entries"
+                                  Dense="true"
+                                  Hover="true"
+                                  Striped="true"
+                                  RowClassFunc="GetRowClass"
+                                  OnRowClick="@((TableRowClickEventArgs<AclEntry> args) => HandleRowClick(args))">
+                            <HeaderContent>
+                                <MudTh>#</MudTh>
+                                <MudTh>ACL Name</MudTh>
+                                <MudTh>Interface</MudTh>
+                                <MudTh>Action</MudTh>
+                                <MudTh>Protocol</MudTh>
+                                <MudTh>Source</MudTh>
+                                <MudTh>Dest</MudTh>
+                                <MudTh>Dest Port</MudTh>
+                                <MudTh>Remark</MudTh>
+                                <MudTh>Log</MudTh>
+                                <MudTh></MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                @{
+                                    var ruleViolations = GetRuleViolations(context);
+                                }
+                                <MudTd DataLabel="#">@context.Occurrence</MudTd>
+                                <MudTd DataLabel="ACL Name">@context.AclName</MudTd>
+                                <MudTd DataLabel="Interface">@context.Interface</MudTd>
+                                <MudTd DataLabel="Action">
+                                    <MudChip T="string" Color="@GetActionColor(context.Action)" Variant="Variant.Filled" Size="Size.Small">
+                                        @context.Action
+                                    </MudChip>
+                                </MudTd>
+                                <MudTd DataLabel="Protocol">@context.Protocol</MudTd>
+                                <MudTd DataLabel="Source">@context.Source</MudTd>
+                                <MudTd DataLabel="Dest">@context.Destination</MudTd>
+                                <MudTd DataLabel="Dest Port">@context.DestinationPort</MudTd>
+                                <MudTd DataLabel="Remark">@context.Remark</MudTd>
+                                <MudTd DataLabel="Log">
+                                    @if (context.Log)
+                                    {
+                                        <MudChip T="string" Color="Color.Info" Variant="Variant.Filled" Size="Size.Small">log</MudChip>
+                                    }
+                                </MudTd>
+                                <MudTd DataLabel="Violations">
+                                    @if (ruleViolations.Count > 0)
+                                    {
+                                        <MudTooltip Text="@string.Join(", ", ruleViolations)">
+                                            <MudIcon Icon="@Icons.Material.Filled.ReportProblem"
+                                                     Color="Color.Warning"
+                                                     Size="Size.Small" />
+                                        </MudTooltip>
+                                    }
+                                </MudTd>
+                            </RowTemplate>
+                            <NoRecordsContent>
+                                <MudText Typo="Typo.body2" Class="text-secondary">Upload a config to see parsed ACL rules.</MudText>
+                            </NoRecordsContent>
+                        </MudTable>
+                    </div>
+                </MudPaper>
+
+                <MudPaper Elevation="2" Class="p-4 acl-panel acl-panel-scroll">
+                    <MudText Typo="Typo.subtitle1" Class="font-weight-bold mb-2">Rule Details</MudText>
+                    <div class="acl-detail-scroll">
+                        <MudTable Items="DetailRows" Dense="true" Hover="true" Striped="false" Class="acl-detail-table">
+                            <HeaderContent>
+                                <MudTh>Protocol Info</MudTh>
+                                <MudTh>Source Info</MudTh>
+                                <MudTh>Destination Info</MudTh>
+                                <MudTh>Dest. Port Info</MudTh>
+                                <MudTh>Violations</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="Protocol Info">
+                                    <div class="acl-detail-cell">
+                                        <span class="acl-tree-prefix">@context.ProtocolPrefix</span>@context.ProtocolInfo
+                                    </div>
+                                </MudTd>
+                                <MudTd DataLabel="Source Info">
+                                    <div class="acl-detail-cell">
+                                        <span class="acl-tree-prefix">@context.SourcePrefix</span>@context.SourceInfo
+                                    </div>
+                                </MudTd>
+                                <MudTd DataLabel="Destination Info">
+                                    <div class="acl-detail-cell">
+                                        <span class="acl-tree-prefix">@context.DestinationPrefix</span>@context.DestinationInfo
+                                    </div>
+                                </MudTd>
+                                <MudTd DataLabel="Dest. Port Info">
+                                    <div class="acl-detail-cell">
+                                        <span class="acl-tree-prefix">@context.DestinationPortPrefix</span>@context.DestinationPortInfo
+                                    </div>
+                                </MudTd>
+                                <MudTd DataLabel="Violations">
+                                    @if (context.Violations.Count > 0)
+                                    {
+                                        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                                            @foreach (var violation in context.Violations)
+                                            {
+                                                if (violation == "Any to Any")
+                                                {
+                                                    <MudChip T="string" Color="Color.Warning" Variant="Variant.Outlined" Size="Size.Small">
+                                                        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+                                                            <MudText Typo="Typo.caption">Any</MudText>
+                                                            <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" />
+                                                            <MudText Typo="Typo.caption">Any</MudText>
+                                                        </MudStack>
+                                                    </MudChip>
+                                                }
+                                                else
+                                                {
+                                                    <MudChip T="string" Color="Color.Warning" Variant="Variant.Outlined" Size="Size.Small">
+                                                        @violation
+                                                    </MudChip>
+                                                }
+                                            }
+                                        </MudStack>
+                                    }
+                                </MudTd>
+                            </RowTemplate>
+                            <NoRecordsContent>
+                                <MudText Typo="Typo.body2" Class="text-secondary">Select a rule to view details.</MudText>
+                            </NoRecordsContent>
+                        </MudTable>
+                    </div>
+                </MudPaper>
+            </MudStack>
+        </MudItem>
+    </MudGrid>
+</MudContainer>
+
+<style>
+    .acl-drop-zone {
+        position: relative;
+        border: 2px dashed rgba(0, 0, 0, 0.25);
+        border-radius: 16px;
+        padding: 28px;
+        min-height: 190px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, rgba(222, 232, 255, 0.45), rgba(255, 244, 218, 0.55));
     }
 
-    return Array.from(input.files).map(function (file) {
-        return file.webkitRelativePath || file.name;
-    });
-}
+    .acl-drop-input {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
+    }
+
+    .acl-drop-content {
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .acl-drop-icon {
+        font-size: 34px;
+        opacity: 0.7;
+    }
+
+    .acl-drop-hint {
+        color: rgba(255, 255, 255, 0.85);
+    }
+
+    .acl-upload-grid {
+        align-items: stretch;
+    }
+
+
+    .acl-file-panel {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 12px;
+        height: 100%;
+    }
+
+    .acl-file-tree {
+        max-height: 320px;
+        overflow: auto;
+    }
+
+    .acl-file-active {
+        background-color: rgba(33, 150, 243, 0.12);
+        border-radius: 8px;
+    }
+
+    .acl-tree-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding-left: calc(var(--depth, 0) * 16px);
+        color: var(--mud-palette-text-primary);
+    }
+
+    .acl-tree-folder {
+        opacity: 0.85;
+    }
+
+    .acl-tree-row {
+        cursor: pointer;
+    }
+
+    .acl-tree-text {
+        font-size: 0.875rem;
+    }
+
+    .acl-violation-summary {
+        background: rgba(255, 193, 7, 0.08);
+        border: 1px solid rgba(255, 193, 7, 0.18);
+        border-radius: 10px;
+        padding: 8px 10px;
+    }
+
+    .acl-row-deny {
+        background-color: rgba(244, 67, 54, 0.08);
+    }
+
+    .acl-row-remark {
+        background-color: rgba(158, 158, 158, 0.08);
+    }
+
+    .acl-row-selected {
+        outline: 2px solid rgba(33, 150, 243, 0.35);
+        outline-offset: -2px;
+    }
+
+    .acl-table-scroll {
+        flex: 1 1 auto;
+        overflow: auto;
+    }
+
+    .acl-detail-scroll {
+        flex: 1 1 auto;
+        overflow: auto;
+        min-height: 0;
+    }
+
+    .acl-panel {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    .acl-panel-scroll {
+        flex: 1 1 0;
+        min-height: 0;
+    }
+
+    .acl-right-stack {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
+    }
+
+    .acl-right-column {
+        min-height: 0;
+    }
+
+    @@media (min-width: 960px) {
+        .acl-right-column {
+            height: calc(100vh - 160px);
+        }
+    }
+
+    .acl-detail-cell {
+        white-space: pre-wrap;
+        line-height: 0.9;
+    }
+
+    .acl-detail-table .mud-table-cell {
+        padding: 0 6px;
+    }
+
+    .acl-detail-table .mud-table-row {
+        line-height: 0.9;
+    }
+
+    .acl-tree-prefix {
+        margin-right: 4px;
+        font-size: 1.25em;
+        line-height: 0.9;
+        display: inline-block;
+        margin-top: -1px;
+        margin-bottom: -1px;
+    }
+
+    .acl-tree-prefix {
+        color: currentColor;
+        font-family: "Courier New", monospace;
+        white-space: pre;
+    }
+
+    .acl-summary-row {
+        justify-content: space-between;
+        width: 100%;
+    }
+
+    .acl-logfiles {
+        flex-wrap: wrap;
+        align-items: center;
+    }
+
+    .acl-summary-right {
+        margin-left: auto;
+        justify-content: flex-end;
+    }
+
+    .acl-rules-header {
+        justify-content: space-between;
+        gap: 12px;
+        width: 100%;
+    }
+
+    .acl-rules-chips {
+        margin-left: auto;
+    }
+</style>
+
+@code {
+    private const string AclModulePath = "/Pages/ACL%20Parser/acl-parser.js";
+    private IJSObjectReference? AclModule;
+
+    private readonly List<AclEntry> Entries = new();
+    private readonly List<string> ParseWarnings = new();
+    private readonly List<AclDetailRow> DetailRows = new();
+    private readonly Dictionary<string, List<string>> NetworkObjectGroups = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<string>> NetworkObjects = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<LogFileEntry> LogFiles = new();
+    private readonly List<TreeItemData<LogTreeNode>> LogFileTree = new();
+    private string? UploadedFileName;
+    private DateTime? UploadedAt;
+    private bool IsLoading;
+    private AclEntry? SelectedEntry;
+    private InputFile? FolderInput;
+
+    private async Task HandleFolderSelected(InputFileChangeEventArgs args)
+    {
+        IsLoading = true;
+        ParseWarnings.Clear();
+        Entries.Clear();
+        LogFiles.Clear();
+        LogFileTree.Clear();
+
+        try
+        {
+            if (AclModule is null)
+            {
+                AclModule = await JS.InvokeAsync<IJSObjectReference>("import", AclModulePath);
+            }
+
+            var files = args.GetMultipleFiles(200);
+            var relativePaths = Array.Empty<string>();
+            if (FolderInput is not null)
+            {
+                relativePaths = await AclModule.InvokeAsync<string[]>("getRelativePaths", FolderInput.Element);
+            }
+            LogFileEntry? firstLogFile = null;
+            for (var i = 0; i < files.Count; i++)
+            {
+                var file = files[i];
+                if (!file.Name.EndsWith(".log", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var relativePath = i < relativePaths.Length ? relativePaths[i] : file.Name;
+                if (string.IsNullOrWhiteSpace(relativePath))
+                {
+                    relativePath = file.Name;
+                }
+
+                var entry = new LogFileEntry(file.Name, file, relativePath);
+                LogFiles.Add(entry);
+                firstLogFile ??= entry;
+            }
+
+            if (LogFiles.Count == 0)
+            {
+                ParseWarnings.Add("No .log files found in the selected folder.");
+                return;
+            }
+
+            UploadedFileName = $"{LogFiles.Count} log file(s) found";
+            BuildLogFileTree();
+            if (firstLogFile is not null)
+            {
+                await LoadLogFile(firstLogFile.File);
+            }
+        }
+        catch (Exception ex)
+        {
+            ParseWarnings.Add($"Unable to parse file: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task SelectLogFile(LogFileEntry entry)
+    {
+        await LoadLogFile(entry.File);
+    }
+
+    private async Task OnLogTreeSelected(LogTreeNode node)
+    {
+        if (node.IsFolder || node.FileEntry is null)
+        {
+            return;
+        }
+
+        await LoadLogFile(node.FileEntry.File);
+    }
+
+    private async Task LoadLogFile(IBrowserFile file)
+    {
+        Entries.Clear();
+        ParseWarnings.Clear();
+        NetworkObjectGroups.Clear();
+        NetworkObjects.Clear();
+
+        await using var stream = file.OpenReadStream(maxAllowedSize: 10_000_000);
+        using var reader = new StreamReader(stream);
+        var content = await reader.ReadToEndAsync();
+
+        UploadedFileName = file.Name;
+        UploadedAt = DateTime.Now;
+        ParseNetworkObjectGroups(content);
+        ParseNetworkObjects(content);
+        Entries.AddRange(ParseAcl(content));
+        SelectedEntry = Entries.FirstOrDefault();
+        BuildDetailRows();
+    }
+
+    private void BuildLogFileTree()
+    {
+        LogFileTree.Clear();
+
+        foreach (var entry in LogFiles.OrderBy(file => file.RelativePath, StringComparer.OrdinalIgnoreCase))
+        {
+            var normalized = entry.RelativePath.Replace('\\', '/');
+            var segments = normalized.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length == 0)
+            {
+                continue;
+            }
+
+            var currentLevel = LogFileTree;
+            for (var i = 0; i < segments.Length; i++)
+            {
+                var segment = segments[i];
+                var isFile = i == segments.Length - 1;
+
+                if (isFile)
+                {
+                    currentLevel.Add(new TreeItemData<LogTreeNode>
+                    {
+                        Text = segment,
+                        Icon = Icons.Material.Filled.Description,
+                        Value = new LogTreeNode(segment, false, entry),
+                        Expandable = false
+                    });
+                    break;
+                }
+
+                var existing = currentLevel.FirstOrDefault(node =>
+                    node.Value is not null &&
+                    node.Value.IsFolder &&
+                    node.Value.Name.Equals(segment, StringComparison.OrdinalIgnoreCase));
+
+                if (existing is null)
+                {
+                    existing = new TreeItemData<LogTreeNode>
+                    {
+                        Text = segment,
+                        Icon = Icons.Material.Filled.Folder,
+                        Value = new LogTreeNode(segment, true, null),
+                        Expanded = true,
+                        Expandable = true,
+                        Children = new List<TreeItemData<LogTreeNode>>()
+                    };
+                    currentLevel.Add(existing);
+                }
+
+                existing.Expandable = true;
+                currentLevel = existing.Children ??= new List<TreeItemData<LogTreeNode>>();
+            }
+        }
+
+        SortTreeNodes(LogFileTree);
+    }
+
+    private RenderFragment RenderLogTree(IEnumerable<TreeItemData<LogTreeNode>> nodes, int depth) => builder =>
+    {
+        var sequence = 0;
+        foreach (var node in nodes)
+        {
+            var isFolder = node.Value?.IsFolder == true;
+            var isActive = !isFolder && node.Value?.FileEntry?.DisplayName == UploadedFileName;
+
+            builder.OpenComponent<MudListItem<LogTreeNode>>(sequence++);
+            builder.AddAttribute(sequence++, "Class", $"acl-tree-row{(isActive ? " acl-file-active" : string.Empty)}");
+            builder.AddAttribute(sequence++, "Style", $"--depth:{depth}");
+            if (isFolder && node.Value is not null)
+            {
+                builder.AddAttribute(sequence++, "OnClick",
+                    EventCallback.Factory.Create<MouseEventArgs>(this, (MouseEventArgs _) => ToggleFolder(node.Value)));
+            }
+            else if (!isFolder && node.Value?.FileEntry is not null)
+            {
+                builder.AddAttribute(sequence++, "OnClick",
+                    EventCallback.Factory.Create<MouseEventArgs>(this, (MouseEventArgs _) => SelectLogFile(node.Value.FileEntry)));
+            }
+
+            builder.AddAttribute(sequence++, "ChildContent", (RenderFragment)(childBuilder =>
+            {
+                childBuilder.OpenElement(sequence++, "div");
+                childBuilder.AddAttribute(sequence++, "class", $"acl-tree-item{(isFolder ? " acl-tree-folder" : string.Empty)}");
+                if (isFolder && node.Value is not null)
+                {
+                    childBuilder.OpenComponent<MudIcon>(sequence++);
+                    childBuilder.AddAttribute(sequence++, "Icon", node.Value.IsExpanded ? Icons.Material.Filled.ExpandMore : Icons.Material.Filled.ChevronRight);
+                    childBuilder.AddAttribute(sequence++, "Size", Size.Small);
+                    childBuilder.CloseComponent();
+                }
+
+                childBuilder.OpenComponent<MudIcon>(sequence++);
+                childBuilder.AddAttribute(sequence++, "Icon", isFolder ? Icons.Material.Filled.Folder : Icons.Material.Filled.Description);
+                childBuilder.AddAttribute(sequence++, "Size", Size.Small);
+                childBuilder.CloseComponent();
+                childBuilder.OpenElement(sequence++, "span");
+                childBuilder.AddAttribute(sequence++, "class", "acl-tree-text");
+                childBuilder.AddContent(sequence++, string.IsNullOrWhiteSpace(node.Text) ? "(unnamed)" : node.Text);
+                childBuilder.CloseElement();
+                childBuilder.CloseElement();
+            }));
+            builder.CloseComponent();
+
+            if (node.Children is not null && node.Children.Count > 0 && (node.Value?.IsExpanded ?? true))
+            {
+                builder.AddContent(sequence++, RenderLogTree(node.Children, depth + 1));
+            }
+        }
+    };
+
+    private void ToggleFolder(LogTreeNode node)
+    {
+        node.IsExpanded = !node.IsExpanded;
+        StateHasChanged();
+    }
+
+    private static void SortTreeNodes(List<TreeItemData<LogTreeNode>> nodes)
+    {
+        nodes.Sort((left, right) =>
+        {
+            var leftIsFolder = left.Value?.IsFolder ?? false;
+            var rightIsFolder = right.Value?.IsFolder ?? false;
+
+            if (leftIsFolder != rightIsFolder)
+            {
+                return leftIsFolder ? -1 : 1;
+            }
+
+            return string.Compare(left.Text, right.Text, StringComparison.OrdinalIgnoreCase);
+        });
+
+        foreach (var node in nodes)
+        {
+            if (node.Children is not null && node.Children.Count > 0)
+            {
+                SortTreeNodes(node.Children);
+            }
+        }
+    }
+    private IEnumerable<AclEntry> ParseAcl(string content)
+    {
+        var results = new List<AclEntry>();
+        var lines = content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+        string? currentAclName = null;
+        var inNamedAcl = false;
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var rawLine = lines[i];
+            var lineNumber = i + 1;
+            var trimmed = rawLine.Trim();
+
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                continue;
+            }
+
+            if (trimmed.StartsWith("!", StringComparison.Ordinal) || trimmed.StartsWith("#", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var tokens = Tokenize(trimmed);
+            if (tokens.Length == 0)
+            {
+                continue;
+            }
+
+            if (tokens.Length >= 3 &&
+                tokens[0].Equals("ip", StringComparison.OrdinalIgnoreCase) &&
+                tokens[1].Equals("access-list", StringComparison.OrdinalIgnoreCase))
+            {
+                if (tokens.Length >= 4)
+                {
+                    currentAclName = tokens[3];
+                    inNamedAcl = true;
+                }
+
+                continue;
+            }
+
+            if (tokens[0].Equals("exit", StringComparison.OrdinalIgnoreCase) ||
+                tokens[0].Equals("end", StringComparison.OrdinalIgnoreCase))
+            {
+                currentAclName = null;
+                inNamedAcl = false;
+                continue;
+            }
+
+            var entry = TryParseAclEntry(tokens, lineNumber, trimmed, currentAclName, inNamedAcl);
+            if (entry is null)
+            {
+                if (LooksLikeAclLine(tokens))
+                {
+                    ParseWarnings.Add($"Line {lineNumber}: Unrecognized ACL syntax.");
+                }
+                continue;
+            }
+
+            if (TryAttachRemark(entry, results))
+            {
+                continue;
+            }
+
+            results.Add(entry with { Occurrence = results.Count + 1 });
+        }
+
+        return results;
+    }
+
+    private static bool TryAttachRemark(AclEntry remarkEntry, List<AclEntry> results)
+    {
+        if (!remarkEntry.Action.Equals("remark", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (results.Count == 0 || string.IsNullOrWhiteSpace(remarkEntry.Remark))
+        {
+            return false;
+        }
+
+        for (var i = results.Count - 1; i >= 0; i--)
+        {
+            var candidate = results[i];
+            if (!string.IsNullOrWhiteSpace(remarkEntry.AclName) &&
+                !candidate.AclName.Equals(remarkEntry.AclName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (candidate.Action.Equals("remark", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var newRemark = string.IsNullOrWhiteSpace(candidate.Remark)
+                ? remarkEntry.Remark
+                : $"{candidate.Remark} / {remarkEntry.Remark}";
+            results[i] = candidate with { Remark = newRemark };
+            return true;
+        }
+
+        return false;
+    }
+
+    private void ParseNetworkObjectGroups(string content)
+    {
+        NetworkObjectGroups.Clear();
+
+        var lines = content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+        string? currentGroup = null;
+
+        foreach (var rawLine in lines)
+        {
+            var trimmed = rawLine.Trim();
+            if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith("!", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (trimmed.StartsWith("object-group network ", StringComparison.OrdinalIgnoreCase))
+            {
+                var tokens = Tokenize(trimmed);
+                if (tokens.Length >= 3)
+                {
+                    currentGroup = tokens[2];
+                    if (!NetworkObjectGroups.ContainsKey(currentGroup))
+                    {
+                        NetworkObjectGroups[currentGroup] = new List<string>();
+                    }
+                }
+                continue;
+            }
+
+            if (currentGroup is null)
+            {
+                continue;
+            }
+
+            if (!IsIndentedLine(rawLine))
+            {
+                currentGroup = null;
+                continue;
+            }
+
+            if (trimmed.StartsWith("network-object ", StringComparison.OrdinalIgnoreCase))
+            {
+                var member = trimmed.Substring("network-object ".Length).Trim();
+                if (!string.IsNullOrWhiteSpace(member))
+                {
+                    NetworkObjectGroups[currentGroup].Add(member);
+                }
+                continue;
+            }
+
+            if (trimmed.StartsWith("group-object ", StringComparison.OrdinalIgnoreCase))
+            {
+                var groupName = trimmed.Substring("group-object ".Length).Trim();
+                if (!string.IsNullOrWhiteSpace(groupName))
+                {
+                    NetworkObjectGroups[currentGroup].Add($"group-object {groupName}");
+                }
+            }
+        }
+    }
+
+    private void ParseNetworkObjects(string content)
+    {
+        NetworkObjects.Clear();
+
+        var lines = content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+        string? currentObject = null;
+
+        foreach (var rawLine in lines)
+        {
+            var trimmed = rawLine.Trim();
+            if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith("!", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (trimmed.StartsWith("object network ", StringComparison.OrdinalIgnoreCase))
+            {
+                var tokens = Tokenize(trimmed);
+                if (tokens.Length >= 3)
+                {
+                    currentObject = tokens[2];
+                    if (!NetworkObjects.ContainsKey(currentObject))
+                    {
+                        NetworkObjects[currentObject] = new List<string>();
+                    }
+                }
+                continue;
+            }
+
+            if (currentObject is null)
+            {
+                continue;
+            }
+
+            if (!IsIndentedLine(rawLine))
+            {
+                currentObject = null;
+                continue;
+            }
+
+            NetworkObjects[currentObject].Add(trimmed);
+        }
+    }
+
+    private static string[] Tokenize(string line)
+    {
+        return line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    private static bool LooksLikeAclLine(string[] tokens)
+    {
+        if (tokens.Length == 0)
+        {
+            return false;
+        }
+
+        if (tokens[0].Equals("access-list", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (IsSequenceNumber(tokens[0]) && tokens.Length > 1)
+        {
+            var actionAfterSequence = tokens[1];
+            return IsActionToken(actionAfterSequence) || actionAfterSequence.Equals("remark", StringComparison.OrdinalIgnoreCase);
+        }
+
+        var action = tokens[0];
+        return IsActionToken(action) || action.Equals("remark", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static AclEntry? TryParseAclEntry(string[] tokens, int lineNumber, string raw, string? currentAclName, bool inNamedAcl)
+    {
+        var index = 0;
+        var aclName = currentAclName;
+
+        if (tokens[0].Equals("access-list", StringComparison.OrdinalIgnoreCase))
+        {
+            if (tokens.Length < 3)
+            {
+                return null;
+            }
+
+            aclName = tokens[1];
+            index = 2;
+        }
+        else if (!IsActionToken(tokens[0]) && !tokens[0].Equals("remark", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!inNamedAcl)
+            {
+                return null;
+            }
+
+            index = 0;
+        }
+
+        if (index < tokens.Length && tokens[index].Equals("line", StringComparison.OrdinalIgnoreCase))
+        {
+            if (index + 1 < tokens.Length && IsSequenceNumber(tokens[index + 1]))
+            {
+                index += 2;
+            }
+        }
+
+        if (index < tokens.Length && IsSequenceNumber(tokens[index]))
+        {
+            index++;
+        }
+
+        if (index < tokens.Length && IsAclTypeToken(tokens[index]))
+        {
+            index++;
+        }
+
+        if (index >= tokens.Length)
+        {
+            return null;
+        }
+
+        var action = tokens[index].ToLowerInvariant();
+        if (action == "remark")
+        {
+            var comment = string.Join(' ', tokens.Skip(index + 1));
+            return new AclEntry(
+                lineNumber,
+                0,
+                raw,
+                aclName ?? string.Empty,
+                string.Empty,
+                action,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                comment,
+                false);
+        }
+
+        if (!IsActionToken(action))
+        {
+            return null;
+        }
+
+        index++;
+        var protocol = index < tokens.Length ? tokens[index].ToLowerInvariant() : "ip";
+        if (protocol is "object" or "object-group")
+        {
+            if (index + 1 < tokens.Length)
+            {
+                protocol = $"{protocol} {tokens[index + 1]}";
+                index += 2;
+            }
+            else
+            {
+                index++;
+            }
+        }
+        else
+        {
+            index++;
+        }
+
+        var (source, afterSource) = ParseAddress(tokens, index);
+        index = afterSource;
+
+        var (sourcePort, afterSourcePort) = ParsePort(tokens, index);
+        if (afterSourcePort != index)
+        {
+            index = afterSourcePort;
+        }
+
+        var (destination, afterDestination) = ParseAddress(tokens, index);
+        index = afterDestination;
+
+        var (destinationPort, afterDestinationPort) = ParsePort(tokens, index);
+        if (afterDestinationPort != index)
+        {
+            index = afterDestinationPort;
+        }
+
+        var options = index < tokens.Length ? string.Join(' ', tokens.Skip(index)) : string.Empty;
+        var log = ContainsLog(tokens, index);
+        var iface = ExtractInterface(source, destination, options);
+
+        return new AclEntry(
+            lineNumber,
+            0,
+            raw,
+            aclName ?? string.Empty,
+            iface,
+            action,
+            protocol,
+            source,
+            sourcePort,
+            destination,
+            destinationPort,
+            options,
+            string.Empty,
+            log);
+    }
+
+    private static (string Value, int NextIndex) ParseAddress(string[] tokens, int start)
+    {
+        if (start >= tokens.Length)
+        {
+            return (string.Empty, start);
+        }
+
+        var token = tokens[start];
+        if (token.Equals("any", StringComparison.OrdinalIgnoreCase))
+        {
+            return ("any", start + 1);
+        }
+
+        if (token.Equals("host", StringComparison.OrdinalIgnoreCase) && start + 1 < tokens.Length)
+        {
+            return ($"host {tokens[start + 1]}", start + 2);
+        }
+
+        if ((token.Equals("object", StringComparison.OrdinalIgnoreCase) ||
+             token.Equals("object-group", StringComparison.OrdinalIgnoreCase) ||
+             token.Equals("interface", StringComparison.OrdinalIgnoreCase)) &&
+            start + 1 < tokens.Length)
+        {
+            return ($"{token} {tokens[start + 1]}", start + 2);
+        }
+
+        if (LooksLikeIp(token) && start + 1 < tokens.Length && LooksLikeIp(tokens[start + 1]))
+        {
+            return ($"{token} {tokens[start + 1]}", start + 2);
+        }
+
+        if (token.Contains('/', StringComparison.Ordinal))
+        {
+            return (token, start + 1);
+        }
+
+        return (token, start + 1);
+    }
+
+    private static (string Value, int NextIndex) ParsePort(string[] tokens, int start)
+    {
+        if (start >= tokens.Length)
+        {
+            return (string.Empty, start);
+        }
+
+        var token = tokens[start].ToLowerInvariant();
+        if (token is "eq" or "gt" or "lt" or "neq")
+        {
+            return start + 1 < tokens.Length
+                ? ($"{token} {tokens[start + 1]}", start + 2)
+                : (token, start + 1);
+        }
+
+        if (token == "range")
+        {
+            return start + 2 < tokens.Length
+                ? ($"{token} {tokens[start + 1]} {tokens[start + 2]}", start + 3)
+                : (token, start + 1);
+        }
+
+        return (string.Empty, start);
+    }
+
+    private static bool IsActionToken(string token)
+    {
+        return token.Equals("permit", StringComparison.OrdinalIgnoreCase) ||
+               token.Equals("deny", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsAclTypeToken(string token)
+    {
+        return token.Equals("extended", StringComparison.OrdinalIgnoreCase) ||
+               token.Equals("standard", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSequenceNumber(string token)
+    {
+        return int.TryParse(token, out _);
+    }
+
+    private static bool LooksLikeIp(string token)
+    {
+        return System.Net.IPAddress.TryParse(token, out _);
+    }
+
+    private static bool ContainsLog(string[] tokens, int start)
+    {
+        for (var i = start; i < tokens.Length; i++)
+        {
+            if (tokens[i].Equals("log", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string ExtractInterface(string source, string destination, string options)
+    {
+        if (source.StartsWith("interface ", StringComparison.OrdinalIgnoreCase))
+        {
+            return source.Substring("interface ".Length);
+        }
+
+        if (destination.StartsWith("interface ", StringComparison.OrdinalIgnoreCase))
+        {
+            return destination.Substring("interface ".Length);
+        }
+
+        if (options.Contains("interface ", StringComparison.OrdinalIgnoreCase))
+        {
+            var parts = options.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            for (var i = 0; i < parts.Length - 1; i++)
+            {
+                if (parts[i].Equals("interface", StringComparison.OrdinalIgnoreCase))
+                {
+                    return parts[i + 1];
+                }
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static bool IsIndentedLine(string line)
+    {
+        return !string.IsNullOrEmpty(line) && char.IsWhiteSpace(line[0]);
+    }
+
+    private static Color GetActionColor(string action)
+    {
+        return action switch
+        {
+            "permit" => Color.Success,
+            "deny" => Color.Error,
+            "remark" => Color.Default,
+            _ => Color.Info
+        };
+    }
+
+    private string GetRowClass(AclEntry entry, int index)
+    {
+        var baseClass = entry.Action switch
+        {
+            "deny" => "acl-row-deny",
+            "remark" => "acl-row-remark",
+            _ => string.Empty
+        };
+
+        if (SelectedEntry is not null && entry.Occurrence == SelectedEntry.Occurrence)
+        {
+            return string.IsNullOrWhiteSpace(baseClass) ? "acl-row-selected" : $"{baseClass} acl-row-selected";
+        }
+
+        return baseClass;
+    }
+
+    private void HandleRowClick(TableRowClickEventArgs<AclEntry> args)
+    {
+        SelectedEntry = args.Item;
+        BuildDetailRows();
+    }
+
+    private void BuildDetailRows()
+    {
+        DetailRows.Clear();
+
+        if (SelectedEntry is null)
+        {
+            return;
+        }
+
+        var protocolNodes = DescribeProtocolNodes(SelectedEntry);
+        var sourceNodes = DescribeAddressNodes(SelectedEntry.Source);
+        var destinationNodes = DescribeAddressNodes(SelectedEntry.Destination);
+        var portNodes = DescribeDestinationPortNodes(SelectedEntry);
+        var protocolPrefixes = ComputeTreePrefixes(protocolNodes);
+        var sourcePrefixes = ComputeTreePrefixes(sourceNodes);
+        var destinationPrefixes = ComputeTreePrefixes(destinationNodes);
+        var portPrefixes = ComputeTreePrefixes(portNodes);
+
+        var maxRows = new[] { protocolNodes.Count, sourceNodes.Count, destinationNodes.Count, portNodes.Count }.Max();
+        for (var i = 0; i < maxRows; i++)
+        {
+            var protocolNode = GetNodeAt(protocolNodes, i);
+            var sourceNode = GetNodeAt(sourceNodes, i);
+            var destinationNode = GetNodeAt(destinationNodes, i);
+            var portNode = GetNodeAt(portNodes, i);
+            var violations = GetRowViolations(SelectedEntry, sourceNode.Text, destinationNode.Text);
+
+            DetailRows.Add(new AclDetailRow(
+                protocolNode.Text,
+                GetPrefixAt(protocolPrefixes, i),
+                sourceNode.Text,
+                GetPrefixAt(sourcePrefixes, i),
+                destinationNode.Text,
+                GetPrefixAt(destinationPrefixes, i),
+                portNode.Text,
+                GetPrefixAt(portPrefixes, i),
+                violations));
+        }
+    }
+
+    private static List<DetailNode> DescribeProtocolNodes(AclEntry entry)
+    {
+        var nodes = new List<DetailNode>();
+
+        if (string.IsNullOrWhiteSpace(entry.Protocol))
+        {
+            nodes.Add(new DetailNode("Not set", 0));
+            return nodes;
+        }
+
+        if (entry.Protocol.StartsWith("object-group ", StringComparison.OrdinalIgnoreCase))
+        {
+            nodes.Add(new DetailNode($"Service group: {entry.Protocol.Replace("object-group ", string.Empty, StringComparison.OrdinalIgnoreCase)}", 0));
+            return nodes;
+        }
+
+        if (entry.Protocol.StartsWith("object ", StringComparison.OrdinalIgnoreCase))
+        {
+            nodes.Add(new DetailNode($"Service object: {entry.Protocol.Replace("object ", string.Empty, StringComparison.OrdinalIgnoreCase)}", 0));
+            return nodes;
+        }
+
+        nodes.Add(new DetailNode($"Protocol: {entry.Protocol}", 0));
+        return nodes;
+    }
+
+    private List<DetailNode> DescribeAddressNodes(string address)
+    {
+        var nodes = new List<DetailNode>();
+
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            nodes.Add(new DetailNode("Not set", 0));
+            return nodes;
+        }
+
+        if (address.Equals("any", StringComparison.OrdinalIgnoreCase))
+        {
+            nodes.Add(new DetailNode("Any", 0));
+            return nodes;
+        }
+
+        if (address.StartsWith("host ", StringComparison.OrdinalIgnoreCase))
+        {
+            nodes.Add(new DetailNode($"Host: {address.Replace("host ", string.Empty, StringComparison.OrdinalIgnoreCase)}", 0));
+            return nodes;
+        }
+
+        if (address.StartsWith("object-group ", StringComparison.OrdinalIgnoreCase))
+        {
+            var groupName = address.Replace("object-group ", string.Empty, StringComparison.OrdinalIgnoreCase).Trim();
+            nodes.Add(new DetailNode($"Object group: {groupName}", 0));
+            BuildNetworkGroupNodes(groupName, 1, nodes, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            return nodes;
+        }
+
+        if (address.StartsWith("object ", StringComparison.OrdinalIgnoreCase))
+        {
+            var objectName = address.Replace("object ", string.Empty, StringComparison.OrdinalIgnoreCase).Trim();
+            nodes.Add(new DetailNode($"Object: {objectName}", 0));
+            AppendNetworkObjectNodes(objectName, 1, nodes);
+            return nodes;
+        }
+
+        if (address.StartsWith("interface ", StringComparison.OrdinalIgnoreCase))
+        {
+            nodes.Add(new DetailNode($"Interface: {address.Replace("interface ", string.Empty, StringComparison.OrdinalIgnoreCase)}", 0));
+            return nodes;
+        }
+
+        nodes.Add(new DetailNode($"Network: {address}", 0));
+        return nodes;
+    }
+
+    private static List<DetailNode> DescribeDestinationPortNodes(AclEntry entry)
+    {
+        var nodes = new List<DetailNode>();
+
+        if (!string.IsNullOrWhiteSpace(entry.DestinationPort))
+        {
+            nodes.Add(new DetailNode($"Port: {entry.DestinationPort}", 0));
+            return nodes;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Remark))
+        {
+            nodes.Add(new DetailNode($"Remark: {entry.Remark}", 0));
+            return nodes;
+        }
+
+        nodes.Add(new DetailNode("Not set", 0));
+        return nodes;
+    }
+
+    private void BuildNetworkGroupNodes(string groupName, int indentLevel, List<DetailNode> nodes, HashSet<string> visitedGroups)
+    {
+        if (string.IsNullOrWhiteSpace(groupName))
+        {
+            return;
+        }
+
+        if (!visitedGroups.Add(groupName))
+        {
+            nodes.Add(new DetailNode($"(cycle detected: {groupName})", indentLevel));
+            return;
+        }
+
+        if (!NetworkObjectGroups.TryGetValue(groupName, out var members))
+        {
+            nodes.Add(new DetailNode("(group not found)", indentLevel));
+            return;
+        }
+
+        if (members.Count == 0)
+        {
+            nodes.Add(new DetailNode("(no members found)", indentLevel));
+            return;
+        }
+
+        foreach (var member in members)
+        {
+            if (member.StartsWith("group-object ", StringComparison.OrdinalIgnoreCase))
+            {
+                var nestedName = member.Substring("group-object ".Length).Trim();
+                nodes.Add(new DetailNode($"group-object {nestedName}", indentLevel));
+                BuildNetworkGroupNodes(nestedName, indentLevel + 1, nodes, visitedGroups);
+                continue;
+            }
+
+            if (member.StartsWith("object ", StringComparison.OrdinalIgnoreCase))
+            {
+                var objectName = member.Substring("object ".Length).Trim();
+                nodes.Add(new DetailNode($"object {objectName}", indentLevel));
+                AppendNetworkObjectNodes(objectName, indentLevel + 1, nodes);
+                continue;
+            }
+
+            if (member.StartsWith("object-group ", StringComparison.OrdinalIgnoreCase))
+            {
+                var nestedName = member.Substring("object-group ".Length).Trim();
+                nodes.Add(new DetailNode($"object-group {nestedName}", indentLevel));
+                BuildNetworkGroupNodes(nestedName, indentLevel + 1, nodes, visitedGroups);
+                continue;
+            }
+
+            nodes.Add(new DetailNode(member, indentLevel));
+        }
+    }
+
+    private void AppendNetworkObjectNodes(string objectName, int indentLevel, List<DetailNode> nodes)
+    {
+        if (!NetworkObjects.TryGetValue(objectName, out var details) || details.Count == 0)
+        {
+            nodes.Add(new DetailNode("(object details not found)", indentLevel));
+            return;
+        }
+
+        foreach (var detail in details)
+        {
+            nodes.Add(new DetailNode(detail, indentLevel));
+        }
+    }
+
+    private static DetailNode GetNodeAt(List<DetailNode> nodes, int index)
+    {
+        if (index < nodes.Count)
+        {
+            return nodes[index];
+        }
+
+        return new DetailNode(string.Empty, 0);
+    }
+
+    private static List<string> ComputeTreePrefixes(List<DetailNode> nodes)
+    {
+        var prefixes = new List<string>(nodes.Count);
+        var lastAtLevel = new List<bool>();
+
+        for (var i = 0; i < nodes.Count; i++)
+        {
+            var indent = nodes[i].Indent;
+            var isLast = IsLastAtIndent(nodes, i);
+
+            while (lastAtLevel.Count < indent)
+            {
+                lastAtLevel.Add(false);
+            }
+
+            if (indent > 0)
+            {
+                lastAtLevel[indent - 1] = isLast;
+            }
+
+            if (indent <= 0)
+            {
+                prefixes.Add(string.Empty);
+                continue;
+            }
+
+            var prefix = new StringBuilder();
+            prefix.Append("  ");
+            for (var level = 0; level < indent - 1; level++)
+            {
+                prefix.Append(lastAtLevel[level] ? "   " : "\u2502  ");
+            }
+
+            prefix.Append(isLast ? "\u2514\u2500" : "\u251C\u2500");
+            prefixes.Add(prefix.ToString());
+        }
+
+        return prefixes;
+    }
+
+    private static bool IsLastAtIndent(List<DetailNode> nodes, int index)
+    {
+        var indent = nodes[index].Indent;
+        for (var i = index + 1; i < nodes.Count; i++)
+        {
+            var nextIndent = nodes[i].Indent;
+            if (nextIndent < indent)
+            {
+                return true;
+            }
+
+            if (nextIndent == indent)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static string GetPrefixAt(List<string> prefixes, int index)
+    {
+        if (index < prefixes.Count)
+        {
+            return prefixes[index];
+        }
+
+        return string.Empty;
+    }
+
+    private IReadOnlyList<string> GetRowViolations(AclEntry entry, string sourceInfo, string destinationInfo)
+    {
+        var violations = new List<string>();
+
+        if (!IsPermit(entry))
+        {
+            return violations;
+        }
+
+        if (IsAnyAnyViolation(entry) && IsAnyText(sourceInfo) && IsAnyText(destinationInfo))
+        {
+            violations.Add("Any to Any");
+        }
+
+        if (IsCrossZoneViolation(entry) && IsCrossZoneText(sourceInfo, destinationInfo))
+        {
+            violations.Add("Cross-zone");
+        }
+
+        if (IsOverPermissiveViolation(entry) && IsOverPermissiveText(destinationInfo))
+        {
+            violations.Add("Over-permissive");
+        }
+
+        return violations;
+    }
+
+    private IReadOnlyList<string> GetRuleViolations(AclEntry entry)
+    {
+        var violations = new List<string>();
+
+        if (IsAnyAnyViolation(entry))
+        {
+            violations.Add("Any to Any");
+        }
+
+        if (IsCrossZoneViolation(entry))
+        {
+            violations.Add("Cross-zone");
+        }
+
+        if (IsOverPermissiveViolation(entry))
+        {
+            violations.Add("Over-permissive");
+        }
+
+        return violations;
+    }
+
+    private static bool IsAnyText(string value)
+    {
+        return value.Equals("Any", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCrossZoneText(string sourceInfo, string destinationInfo)
+    {
+        return (sourceInfo.Contains("10.17.", StringComparison.Ordinal) && destinationInfo.Contains("10.18.", StringComparison.Ordinal)) ||
+               (sourceInfo.Contains("10.18.", StringComparison.Ordinal) && destinationInfo.Contains("10.17.", StringComparison.Ordinal));
+    }
+
+    private static bool IsOverPermissiveText(string value)
+    {
+        return value.Contains("10.0.0.0", StringComparison.Ordinal) &&
+               (value.Contains("255.0.0.0", StringComparison.Ordinal) ||
+                value.Contains("255.255.0.0", StringComparison.Ordinal) ||
+                value.Contains("/8", StringComparison.Ordinal) ||
+                value.Contains("/16", StringComparison.Ordinal));
+    }
+
+    private int AnyAnyViolationCount => Entries.Count(IsAnyAnyViolation);
+    private int CrossZoneViolationCount => Entries.Count(IsCrossZoneViolation);
+    private int OverPermissiveViolationCount => Entries.Count(IsOverPermissiveViolation);
+
+    private bool IsPermit(AclEntry entry)
+    {
+        return entry.Action.Equals("permit", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsAnyAnyViolation(AclEntry entry)
+    {
+        if (!IsPermit(entry))
+        {
+            return false;
+        }
+
+        var sources = ExpandAddressInfos(entry.Source);
+        var destinations = ExpandAddressInfos(entry.Destination);
+
+        return sources.Any(info => info.IsAny) && destinations.Any(info => info.IsAny);
+    }
+
+    private bool IsCrossZoneViolation(AclEntry entry)
+    {
+        if (!IsPermit(entry))
+        {
+            return false;
+        }
+
+        var sources = ExpandAddressInfos(entry.Source);
+        var destinations = ExpandAddressInfos(entry.Destination);
+
+        var crossesForward = sources.Any(source => IsInSubnet(source, "10.17.0.0", 16)) &&
+                             destinations.Any(destination => IsInSubnet(destination, "10.18.0.0", 16));
+        var crossesReverse = sources.Any(source => IsInSubnet(source, "10.18.0.0", 16)) &&
+                             destinations.Any(destination => IsInSubnet(destination, "10.17.0.0", 16));
+
+        return crossesForward || crossesReverse;
+    }
+
+    private bool IsOverPermissiveViolation(AclEntry entry)
+    {
+        if (!IsPermit(entry))
+        {
+            return false;
+        }
+
+        var sources = ExpandAddressInfos(entry.Source).ToList();
+        var destinations = ExpandAddressInfos(entry.Destination);
+
+        var hasSmallSourceScope = sources.Count > 0 && sources.All(IsSmallSourceScope);
+        var destinationNetworks = destinations.Where(IsOverPermissiveNetwork).ToList();
+
+        return hasSmallSourceScope && destinationNetworks.Count > 0;
+    }
+
+    private static bool IsOverPermissiveNetwork(AddressInfo info)
+    {
+        if (!info.IsNetwork || info.PrefixLength is null || info.Address is null)
+        {
+            return false;
+        }
+
+        if (!IsInSubnet(info, "10.0.0.0", 8))
+        {
+            return false;
+        }
+
+        return info.PrefixLength <= 16;
+    }
+
+    private static bool IsSmallSourceScope(AddressInfo info)
+    {
+        if (info.IsHost)
+        {
+            return true;
+        }
+
+        return info.IsNetwork && info.PrefixLength is not null && info.PrefixLength >= 24;
+    }
+
+    private static AddressInfo ParseAddressInfo(string address)
+    {
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            return AddressInfo.Unknown();
+        }
+
+        if (address.Equals("any", StringComparison.OrdinalIgnoreCase))
+        {
+            return AddressInfo.Any();
+        }
+
+        if (address.StartsWith("host ", StringComparison.OrdinalIgnoreCase))
+        {
+            var hostValue = address.Substring("host ".Length).Trim();
+            return IPAddress.TryParse(hostValue, out var ip)
+                ? AddressInfo.Host(ip)
+                : AddressInfo.Unknown();
+        }
+
+        var parts = address.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 2 && IPAddress.TryParse(parts[0], out var networkIp))
+        {
+            if (parts[1].StartsWith("/", StringComparison.OrdinalIgnoreCase))
+            {
+                if (int.TryParse(parts[1].TrimStart('/'), out var prefixLength))
+                {
+                    return AddressInfo.Network(networkIp, prefixLength);
+                }
+            }
+            else if (IPAddress.TryParse(parts[1], out var maskIp))
+            {
+                var prefixLength = PrefixLengthFromMask(maskIp);
+                if (prefixLength is not null)
+                {
+                    return AddressInfo.Network(networkIp, prefixLength.Value);
+                }
+            }
+        }
+
+        if (parts.Length == 1 && address.Contains('/', StringComparison.Ordinal))
+        {
+            var slashParts = address.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (slashParts.Length == 2 &&
+                IPAddress.TryParse(slashParts[0], out var cidrIp) &&
+                int.TryParse(slashParts[1], out var cidrPrefix))
+            {
+                return AddressInfo.Network(cidrIp, cidrPrefix);
+            }
+        }
+
+        return AddressInfo.Unknown();
+    }
+
+    private static bool IsInSubnet(AddressInfo info, string subnetIp, int prefixLength)
+    {
+        if (info.Address is null)
+        {
+            return false;
+        }
+
+        if (!IPAddress.TryParse(subnetIp, out var subnetAddress))
+        {
+            return false;
+        }
+
+        if (info.IsNetwork && info.PrefixLength is not null && info.PrefixLength < prefixLength)
+        {
+            return false;
+        }
+
+        var mask = PrefixLengthToMask(prefixLength);
+        return (ToUInt32(info.Address) & mask) == (ToUInt32(subnetAddress) & mask);
+    }
+
+    private static uint PrefixLengthToMask(int prefixLength)
+    {
+        if (prefixLength <= 0)
+        {
+            return 0u;
+        }
+
+        return prefixLength >= 32 ? 0xffffffffu : 0xffffffffu << (32 - prefixLength);
+    }
+
+    private static int? PrefixLengthFromMask(IPAddress mask)
+    {
+        var maskValue = ToUInt32(mask);
+        var count = 0;
+        var zeroFound = false;
+
+        for (var i = 31; i >= 0; i--)
+        {
+            var bitSet = (maskValue & (1u << i)) != 0;
+            if (bitSet)
+            {
+                if (zeroFound)
+                {
+                    return null;
+                }
+
+                count++;
+            }
+            else
+            {
+                zeroFound = true;
+            }
+        }
+
+        return count;
+    }
+
+    private static uint ToUInt32(IPAddress ip)
+    {
+        var bytes = ip.GetAddressBytes();
+        if (bytes.Length != 4)
+        {
+            return 0u;
+        }
+
+        if (BitConverter.IsLittleEndian)
+        {
+            Array.Reverse(bytes);
+        }
+
+        return BitConverter.ToUInt32(bytes, 0);
+    }
+
+    private IEnumerable<AddressInfo> ExpandAddressInfos(string address)
+    {
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            return Array.Empty<AddressInfo>();
+        }
+
+        if (address.StartsWith("object-group ", StringComparison.OrdinalIgnoreCase))
+        {
+            var groupName = address.Substring("object-group ".Length).Trim();
+            return ExpandGroupMembers(groupName, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        }
+
+        if (address.StartsWith("object ", StringComparison.OrdinalIgnoreCase))
+        {
+            var objectName = address.Substring("object ".Length).Trim();
+            return ExpandNetworkObjectEntries(objectName);
+        }
+
+        return new[] { ParseAddressInfo(address) };
+    }
+
+    private IEnumerable<AddressInfo> ExpandGroupMembers(string groupName, HashSet<string> visitedGroups)
+    {
+        if (string.IsNullOrWhiteSpace(groupName) || !visitedGroups.Add(groupName))
+        {
+            return Array.Empty<AddressInfo>();
+        }
+
+        if (!NetworkObjectGroups.TryGetValue(groupName, out var members))
+        {
+            return Array.Empty<AddressInfo>();
+        }
+
+        var results = new List<AddressInfo>();
+
+        foreach (var member in members)
+        {
+            if (member.StartsWith("group-object ", StringComparison.OrdinalIgnoreCase))
+            {
+                var nestedName = member.Substring("group-object ".Length).Trim();
+                results.AddRange(ExpandGroupMembers(nestedName, visitedGroups));
+                continue;
+            }
+
+            if (member.StartsWith("object-group ", StringComparison.OrdinalIgnoreCase))
+            {
+                var nestedName = member.Substring("object-group ".Length).Trim();
+                results.AddRange(ExpandGroupMembers(nestedName, visitedGroups));
+                continue;
+            }
+
+            if (member.StartsWith("object ", StringComparison.OrdinalIgnoreCase))
+            {
+                var objectName = member.Substring("object ".Length).Trim();
+                results.AddRange(ExpandNetworkObjectEntries(objectName));
+                continue;
+            }
+
+            var info = ParseAddressInfo(member);
+            results.Add(info);
+        }
+
+        return results;
+    }
+
+    private IEnumerable<AddressInfo> ExpandNetworkObjectEntries(string objectName)
+    {
+        if (!NetworkObjects.TryGetValue(objectName, out var details))
+        {
+            return Array.Empty<AddressInfo>();
+        }
+
+        var results = new List<AddressInfo>();
+
+        foreach (var detail in details)
+        {
+            if (detail.StartsWith("host ", StringComparison.OrdinalIgnoreCase))
+            {
+                results.Add(ParseAddressInfo(detail));
+                continue;
+            }
+
+            if (detail.StartsWith("subnet ", StringComparison.OrdinalIgnoreCase))
+            {
+                var parts = detail.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length >= 3)
+                {
+                    results.Add(ParseAddressInfo($"{parts[1]} {parts[2]}"));
+                }
+                continue;
+            }
+
+            if (detail.StartsWith("range ", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (detail.StartsWith("fqdn ", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+        }
+
+        return results;
+    }
+
+    private sealed record AclEntry(
+        int LineNumber,
+        int Occurrence,
+        string Raw,
+        string AclName,
+        string Interface,
+        string Action,
+        string Protocol,
+        string Source,
+        string SourcePort,
+        string Destination,
+        string DestinationPort,
+        string Options,
+        string Remark,
+        bool Log);
+
+    private sealed record AclDetailRow(
+        string ProtocolInfo,
+        string ProtocolPrefix,
+        string SourceInfo,
+        string SourcePrefix,
+        string DestinationInfo,
+        string DestinationPrefix,
+        string DestinationPortInfo,
+        string DestinationPortPrefix,
+        IReadOnlyList<string> Violations);
+
+    private sealed record DetailNode(string Text, int Indent);
+
+    private sealed record LogFileEntry(string DisplayName, IBrowserFile File, string RelativePath);
+
+    private sealed class LogTreeNode
+    {
+        public LogTreeNode(string name, bool isFolder, LogFileEntry? fileEntry)
+        {
+            Name = name;
+            IsFolder = isFolder;
+            FileEntry = fileEntry;
+            IsExpanded = true;
+        }
+
+        public string Name { get; }
+        public bool IsFolder { get; }
+        public LogFileEntry? FileEntry { get; }
+        public bool IsExpanded { get; set; }
+    }
+
+    private sealed class AddressInfo
+    {
+        private AddressInfo(bool isAny, bool isHost, bool isNetwork, IPAddress? address, int? prefixLength)
+        {
+            IsAny = isAny;
+            IsHost = isHost;
+            IsNetwork = isNetwork;
+            Address = address;
+            PrefixLength = prefixLength;
+        }
+
+        public bool IsAny { get; }
+        public bool IsHost { get; }
+        public bool IsNetwork { get; }
+        public IPAddress? Address { get; }
+        public int? PrefixLength { get; }
+
+        public static AddressInfo Any() => new(true, false, false, null, null);
+        public static AddressInfo Host(IPAddress address) => new(false, true, false, address, null);
+        public static AddressInfo Network(IPAddress address, int prefixLength) => new(false, false, true, address, prefixLength);
+        public static AddressInfo Unknown() => new(false, false, false, null, null);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (AclModule is not null)
+        {
+            await AclModule.DisposeAsync();
+        }
+    }
