@@ -121,13 +121,15 @@
                             </MudPaper>
                         }
                     </MudStack>
-                    <div class="acl-table-scroll">
+                    
                         <MudTable Items="Entries"
                                   Dense="true"
                                   Hover="true"
                                   Striped="true"
                                   RowClassFunc="GetRowClass"
-                                  OnRowClick="@((TableRowClickEventArgs<AclEntry> args) => HandleRowClick(args))">
+                                  OnRowClick="@((TableRowClickEventArgs<AclEntry> args) => HandleRowClick(args))"
+                                  FixedHeader="true"
+                                  Height="var(--acl-table-height)">
                             <HeaderContent>
                                 <MudTh>#</MudTh>
                                 <MudTh>ACL Name</MudTh>
@@ -179,13 +181,13 @@
                                 <MudText Typo="Typo.body2" Class="text-secondary">Upload a config to see parsed ACL rules.</MudText>
                             </NoRecordsContent>
                         </MudTable>
-                    </div>
+                    
                 </MudPaper>
 
                 <MudPaper Elevation="2" Class="p-4 acl-panel acl-panel-scroll">
                     <MudText Typo="Typo.subtitle1" Class="font-weight-bold mb-2">Rule Details</MudText>
                     <div class="acl-detail-scroll">
-                        <MudTable Items="DetailRows" Dense="true" Hover="true" Striped="false" Class="acl-detail-table">
+                        <MudTable Items="DetailRows" Dense="true" Hover="true" Striped="false" Class="acl-detail-table" FixedHeader="true" Height="var(--acl-table-height)">
                             <HeaderContent>
                                 <MudTh>Protocol Info</MudTh>
                                 <MudTh>Source Info</MudTh>
@@ -356,12 +358,11 @@
 
     .acl-table-scroll {
         flex: 1 1 auto;
-        overflow: auto;
+        min-height: 0;
     }
 
     .acl-detail-scroll {
         flex: 1 1 auto;
-        overflow: auto;
         min-height: 0;
     }
 
@@ -385,6 +386,7 @@
 
     .acl-right-column {
         min-height: 0;
+        --acl-table-height: clamp(220px, 32vh, 520px);
     }
 
     @@media (min-width: 960px) {
@@ -450,6 +452,23 @@
 @code {
     private const string AclModulePath = "/Pages/ACL%20Parser/acl-parser.js";
     private IJSObjectReference? AclModule;
+
+    private static readonly Dictionary<string, int> InsecureServicePorts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["ftp"] = 21,
+        ["ftp-data"] = 20,
+        ["telnet"] = 23,
+        ["tftp"] = 69,
+        ["snmp"] = 161,
+        ["snmptrap"] = 162,
+        ["rlogin"] = 513,
+        ["rsh"] = 514
+    };
+
+    private static readonly HashSet<int> InsecurePorts = new()
+    {
+        20, 21, 23, 69, 161, 162, 513, 514
+    };
 
     private readonly List<AclEntry> Entries = new();
     private readonly List<string> ParseWarnings = new();
@@ -717,6 +736,8 @@
         var lines = content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
         string? currentAclName = null;
         var inNamedAcl = false;
+        string? pendingRemark = null;
+        string? pendingRemarkAcl = null;
 
         for (var i = 0; i < lines.Length; i++)
         {
@@ -771,51 +792,43 @@
                 continue;
             }
 
-            if (TryAttachRemark(entry, results))
+            if (entry.Action.Equals("remark", StringComparison.OrdinalIgnoreCase))
             {
+                if (!string.IsNullOrWhiteSpace(entry.Remark))
+                {
+                    pendingRemark = string.IsNullOrWhiteSpace(pendingRemark)
+                        ? entry.Remark
+                        : $"{pendingRemark} / {entry.Remark}";
+
+                    if (!string.IsNullOrWhiteSpace(entry.AclName))
+                    {
+                        pendingRemarkAcl = entry.AclName;
+                    }
+                }
                 continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(pendingRemark))
+            {
+                if (string.IsNullOrWhiteSpace(pendingRemarkAcl) ||
+                    entry.AclName.Equals(pendingRemarkAcl, StringComparison.OrdinalIgnoreCase))
+                {
+                    entry = entry with
+                    {
+                        Remark = string.IsNullOrWhiteSpace(entry.Remark)
+                            ? pendingRemark
+                            : $"{pendingRemark} / {entry.Remark}"
+                    };
+                }
+
+                pendingRemark = null;
+                pendingRemarkAcl = null;
             }
 
             results.Add(entry with { Occurrence = results.Count + 1 });
         }
 
         return results;
-    }
-
-    private static bool TryAttachRemark(AclEntry remarkEntry, List<AclEntry> results)
-    {
-        if (!remarkEntry.Action.Equals("remark", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        if (results.Count == 0 || string.IsNullOrWhiteSpace(remarkEntry.Remark))
-        {
-            return false;
-        }
-
-        for (var i = results.Count - 1; i >= 0; i--)
-        {
-            var candidate = results[i];
-            if (!string.IsNullOrWhiteSpace(remarkEntry.AclName) &&
-                !candidate.AclName.Equals(remarkEntry.AclName, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (candidate.Action.Equals("remark", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var newRemark = string.IsNullOrWhiteSpace(candidate.Remark)
-                ? remarkEntry.Remark
-                : $"{candidate.Remark} / {remarkEntry.Remark}";
-            results[i] = candidate with { Remark = newRemark };
-            return true;
-        }
-
-        return false;
     }
 
     private void ParseNetworkObjectGroups(string content)
@@ -1376,7 +1389,7 @@
             var sourceNode = GetNodeAt(sourceNodes, i);
             var destinationNode = GetNodeAt(destinationNodes, i);
             var portNode = GetNodeAt(portNodes, i);
-            var violations = GetRowViolations(SelectedEntry, sourceNode.Text, destinationNode.Text);
+            var violations = GetRowViolations(SelectedEntry, protocolNode.Text, sourceNode.Text, destinationNode.Text, portNode.Text);
 
             DetailRows.Add(new AclDetailRow(
                 protocolNode.Text,
@@ -1476,12 +1489,6 @@
         if (!string.IsNullOrWhiteSpace(entry.DestinationPort))
         {
             nodes.Add(new DetailNode($"Port: {entry.DestinationPort}", 0));
-            return nodes;
-        }
-
-        if (!string.IsNullOrWhiteSpace(entry.Remark))
-        {
-            nodes.Add(new DetailNode($"Remark: {entry.Remark}", 0));
             return nodes;
         }
 
@@ -1713,7 +1720,7 @@
         return string.Empty;
     }
 
-    private IReadOnlyList<string> GetRowViolations(AclEntry entry, string sourceInfo, string destinationInfo)
+    private IReadOnlyList<string> GetRowViolations(AclEntry entry, string protocolInfo, string sourceInfo, string destinationInfo, string destinationPortInfo)
     {
         var violations = new List<string>();
 
@@ -1735,6 +1742,11 @@
         if (IsOverPermissiveViolation(entry) && IsOverPermissiveText(destinationInfo))
         {
             violations.Add("Over-permissive");
+        }
+
+        if (IsInsecureServiceViolation(entry) && HasInsecureServiceInText(protocolInfo, destinationPortInfo))
+        {
+            violations.Add("Insecure service");
         }
 
         return violations;
@@ -1759,7 +1771,182 @@
             violations.Add("Over-permissive");
         }
 
+        if (IsInsecureServiceViolation(entry))
+        {
+            violations.Add("Insecure service");
+        }
+
         return violations;
+    }
+
+    private bool IsInsecureServiceViolation(AclEntry entry)
+    {
+        if (!IsPermit(entry))
+        {
+            return false;
+        }
+
+        if (HasInsecureServiceInText(entry.DestinationPort, entry.Options))
+        {
+            return true;
+        }
+
+        if (entry.Protocol.StartsWith("object-group ", StringComparison.OrdinalIgnoreCase))
+        {
+            var groupName = entry.Protocol.Substring("object-group ".Length).Trim();
+            return ContainsInsecureServiceGroup(groupName, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        }
+
+        if (entry.Protocol.StartsWith("object ", StringComparison.OrdinalIgnoreCase))
+        {
+            var objectName = entry.Protocol.Substring("object ".Length).Trim();
+            return ContainsInsecureServiceObject(objectName);
+        }
+
+        return HasInsecureServiceInText(entry.Protocol);
+    }
+
+    private bool ContainsInsecureServiceGroup(string groupName, HashSet<string> visitedGroups)
+    {
+        if (string.IsNullOrWhiteSpace(groupName) || !visitedGroups.Add(groupName))
+        {
+            return false;
+        }
+
+        if (!ServiceObjectGroups.TryGetValue(groupName, out var members))
+        {
+            return false;
+        }
+
+        foreach (var member in members)
+        {
+            if (member.StartsWith("group-object ", StringComparison.OrdinalIgnoreCase))
+            {
+                var nestedName = member.Substring("group-object ".Length).Trim();
+                if (ContainsInsecureServiceGroup(nestedName, visitedGroups))
+                {
+                    return true;
+                }
+                continue;
+            }
+
+            if (member.StartsWith("object-group ", StringComparison.OrdinalIgnoreCase))
+            {
+                var nestedName = member.Substring("object-group ".Length).Trim();
+                if (ContainsInsecureServiceGroup(nestedName, visitedGroups))
+                {
+                    return true;
+                }
+                continue;
+            }
+
+            if (member.StartsWith("object ", StringComparison.OrdinalIgnoreCase))
+            {
+                var objectName = member.Substring("object ".Length).Trim();
+                if (ContainsInsecureServiceObject(objectName))
+                {
+                    return true;
+                }
+                continue;
+            }
+
+            if (HasInsecureServiceInText(member))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool ContainsInsecureServiceObject(string objectName)
+    {
+        if (!ServiceObjects.TryGetValue(objectName, out var details))
+        {
+            return false;
+        }
+
+        return details.Any(detail => HasInsecureServiceInText(detail));
+    }
+
+    private static bool HasInsecureServiceInText(params string[] values)
+    {
+        foreach (var value in values)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            var tokens = Tokenize(value);
+            if (tokens.Length == 0)
+            {
+                continue;
+            }
+
+            for (var i = 0; i < tokens.Length; i++)
+            {
+                var token = tokens[i];
+                if (IsInsecureServiceName(token, out _))
+                {
+                    return true;
+                }
+
+                if (token.Equals("eq", StringComparison.OrdinalIgnoreCase) ||
+                    token.Equals("neq", StringComparison.OrdinalIgnoreCase) ||
+                    token.Equals("gt", StringComparison.OrdinalIgnoreCase) ||
+                    token.Equals("lt", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (i + 1 < tokens.Length &&
+                        TryParsePortToken(tokens[i + 1], out var port) &&
+                        IsInsecurePort(port))
+                    {
+                        return true;
+                    }
+                    continue;
+                }
+
+                if (token.Equals("range", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (i + 2 < tokens.Length &&
+                        TryParsePortToken(tokens[i + 1], out var startPort) &&
+                        TryParsePortToken(tokens[i + 2], out var endPort))
+                    {
+                        if (startPort > endPort)
+                        {
+                            (startPort, endPort) = (endPort, startPort);
+                        }
+
+                        if (InsecurePorts.Any(port => port >= startPort && port <= endPort))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsInsecureServiceName(string token, out int port)
+    {
+        return InsecureServicePorts.TryGetValue(token, out port);
+    }
+
+    private static bool TryParsePortToken(string token, out int port)
+    {
+        if (int.TryParse(token, out port))
+        {
+            return true;
+        }
+
+        return InsecureServicePorts.TryGetValue(token, out port);
+    }
+
+    private static bool IsInsecurePort(int port)
+    {
+        return InsecurePorts.Contains(port);
     }
 
     private static bool IsAnyText(string value)
