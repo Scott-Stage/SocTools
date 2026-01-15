@@ -1,7 +1,3 @@
-@page "/acl-parser"
-
-<PageTitle>ACL Parser</PageTitle>
-
 <MudContainer MaxWidth="MaxWidth.False" Class="py-6 acl-parser-page">
     <MudStack Spacing="3">
         <MudPaper Elevation="2" Class="p-4">
@@ -253,6 +249,12 @@
             return true;
         }
 
+        if (IsSequenceNumber(tokens[0]) && tokens.Length > 1)
+        {
+            var actionAfterSequence = tokens[1];
+            return IsActionToken(actionAfterSequence) || actionAfterSequence.Equals("remark", StringComparison.OrdinalIgnoreCase);
+        }
+
         var action = tokens[0];
         return IsActionToken(action) || action.Equals("remark", StringComparison.OrdinalIgnoreCase);
     }
@@ -280,6 +282,24 @@
             }
 
             index = 0;
+        }
+
+        if (index < tokens.Length && tokens[index].Equals("line", StringComparison.OrdinalIgnoreCase))
+        {
+            if (index + 1 < tokens.Length && IsSequenceNumber(tokens[index + 1]))
+            {
+                index += 2;
+            }
+        }
+
+        if (index < tokens.Length && IsSequenceNumber(tokens[index]))
+        {
+            index++;
+        }
+
+        if (index < tokens.Length && IsAclTypeToken(tokens[index]))
+        {
+            index++;
         }
 
         if (index >= tokens.Length)
@@ -394,6 +414,17 @@
     {
         return token.Equals("permit", StringComparison.OrdinalIgnoreCase) ||
                token.Equals("deny", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsAclTypeToken(string token)
+    {
+        return token.Equals("extended", StringComparison.OrdinalIgnoreCase) ||
+               token.Equals("standard", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSequenceNumber(string token)
+    {
+        return int.TryParse(token, out _);
     }
 
     private static bool LooksLikeIp(string token)
