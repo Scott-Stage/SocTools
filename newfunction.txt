@@ -1,3 +1,7 @@
+@page "/acl-parser"
+
+<PageTitle>ACL Parser</PageTitle>
+
 <MudContainer MaxWidth="MaxWidth.False" Class="py-6 acl-parser-page">
     <MudStack Spacing="3">
         <MudPaper Elevation="2" Class="p-4">
@@ -51,37 +55,79 @@
         </MudPaper>
 
         <MudPaper Elevation="2" Class="p-4">
-            <MudTable Items="Entries" Dense="true" Hover="true" Striped="true" RowClassFunc="GetRowClass">
+            <MudText Typo="Typo.subtitle1" Class="font-weight-bold mb-2">Rules</MudText>
+            <div class="acl-table-scroll">
+                <MudTable Items="Entries"
+                          Dense="true"
+                          Hover="true"
+                          Striped="true"
+                          RowClassFunc="GetRowClass"
+                          RowClick="HandleRowClick">
+                    <HeaderContent>
+                        <MudTh>#</MudTh>
+                        <MudTh>ACL Name</MudTh>
+                        <MudTh>Interface</MudTh>
+                        <MudTh>Action</MudTh>
+                        <MudTh>Protocol</MudTh>
+                        <MudTh>Source</MudTh>
+                        <MudTh>Dest</MudTh>
+                        <MudTh>Dest Port</MudTh>
+                        <MudTh>Remark</MudTh>
+                        <MudTh>Log</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="#">@context.Occurrence</MudTd>
+                        <MudTd DataLabel="ACL Name">@context.AclName</MudTd>
+                        <MudTd DataLabel="Interface">@context.Interface</MudTd>
+                        <MudTd DataLabel="Action">
+                            <MudChip T="string" Color="@GetActionColor(context.Action)" Variant="Variant.Filled" Size="Size.Small">
+                                @context.Action
+                            </MudChip>
+                        </MudTd>
+                        <MudTd DataLabel="Protocol">@context.Protocol</MudTd>
+                        <MudTd DataLabel="Source">@context.Source</MudTd>
+                        <MudTd DataLabel="Dest">@context.Destination</MudTd>
+                        <MudTd DataLabel="Dest Port">@context.DestinationPort</MudTd>
+                        <MudTd DataLabel="Remark">@context.Remark</MudTd>
+                        <MudTd DataLabel="Log">
+                            @if (context.Log)
+                            {
+                                <MudChip T="string" Color="Color.Info" Variant="Variant.Filled" Size="Size.Small">log</MudChip>
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <MudText Typo="Typo.body2" Class="text-secondary">Upload a config to see parsed ACL rules.</MudText>
+                    </NoRecordsContent>
+                </MudTable>
+            </div>
+        </MudPaper>
+
+        <MudPaper Elevation="2" Class="p-4">
+            <MudText Typo="Typo.subtitle1" Class="font-weight-bold mb-2">Rule Details</MudText>
+            <MudTable Items="DetailRows" Dense="true" Hover="true" Striped="true">
                 <HeaderContent>
-                    <MudTh>#</MudTh>
-                    <MudTh>ACL</MudTh>
-                    <MudTh>Action</MudTh>
-                    <MudTh>Protocol</MudTh>
-                    <MudTh>Source</MudTh>
-                    <MudTh>Src Port</MudTh>
-                    <MudTh>Destination</MudTh>
-                    <MudTh>Dst Port</MudTh>
-                    <MudTh>Comment</MudTh>
-                    <MudTh>Options</MudTh>
+                    <MudTh>Protocol Info</MudTh>
+                    <MudTh>Source Info</MudTh>
+                    <MudTh>Destination Info</MudTh>
+                    <MudTh>Dest. Port Info</MudTh>
                 </HeaderContent>
                 <RowTemplate>
-                    <MudTd DataLabel="#">@context.LineNumber</MudTd>
-                    <MudTd DataLabel="ACL">@context.AclName</MudTd>
-                    <MudTd DataLabel="Action">
-                        <MudChip T="string" Color="@GetActionColor(context.Action)" Variant="Variant.Filled" Size="Size.Small">
-                            @context.Action
-                        </MudChip>
+                    <MudTd DataLabel="Protocol Info">
+                        <div class="acl-detail-cell">@context.ProtocolInfo</div>
                     </MudTd>
-                    <MudTd DataLabel="Protocol">@context.Protocol</MudTd>
-                    <MudTd DataLabel="Source">@context.Source</MudTd>
-                    <MudTd DataLabel="Src Port">@context.SourcePort</MudTd>
-                    <MudTd DataLabel="Destination">@context.Destination</MudTd>
-                    <MudTd DataLabel="Dst Port">@context.DestinationPort</MudTd>
-                    <MudTd DataLabel="Comment">@context.Comment</MudTd>
-                    <MudTd DataLabel="Options">@context.Options</MudTd>
+                    <MudTd DataLabel="Source Info">
+                        <div class="acl-detail-cell">@context.SourceInfo</div>
+                    </MudTd>
+                    <MudTd DataLabel="Destination Info">
+                        <div class="acl-detail-cell">@context.DestinationInfo</div>
+                    </MudTd>
+                    <MudTd DataLabel="Dest. Port Info">
+                        <div class="acl-detail-cell">@context.DestinationPortInfo</div>
+                    </MudTd>
                 </RowTemplate>
                 <NoRecordsContent>
-                    <MudText Typo="Typo.body2" Class="text-secondary">Upload a config to see parsed ACL rules.</MudText>
+                    <MudText Typo="Typo.body2" Class="text-secondary">Select a rule to view details.</MudText>
                 </NoRecordsContent>
             </MudTable>
         </MudPaper>
@@ -125,14 +171,30 @@
     .acl-row-remark {
         background-color: rgba(158, 158, 158, 0.08);
     }
+
+    .acl-row-selected {
+        outline: 2px solid rgba(33, 150, 243, 0.35);
+        outline-offset: -2px;
+    }
+
+    .acl-table-scroll {
+        max-height: 45vh;
+        overflow: auto;
+    }
+
+    .acl-detail-cell {
+        white-space: pre-wrap;
+    }
 </style>
 
 @code {
     private readonly List<AclEntry> Entries = new();
     private readonly List<string> ParseWarnings = new();
+    private readonly List<AclDetailRow> DetailRows = new();
     private string? UploadedFileName;
     private DateTime? UploadedAt;
     private bool IsLoading;
+    private AclEntry? SelectedEntry;
 
     private async Task HandleFileSelected(InputFileChangeEventArgs args)
     {
@@ -155,6 +217,8 @@
             UploadedFileName = file.Name;
             UploadedAt = DateTime.Now;
             Entries.AddRange(ParseAcl(content));
+            SelectedEntry = Entries.FirstOrDefault();
+            BuildDetailRows();
         }
         catch (Exception ex)
         {
@@ -226,7 +290,7 @@
                 continue;
             }
 
-            results.Add(entry);
+            results.Add(entry with { Occurrence = results.Count + 1 });
         }
 
         return results;
@@ -311,7 +375,21 @@
         if (action == "remark")
         {
             var comment = string.Join(' ', tokens.Skip(index + 1));
-            return new AclEntry(lineNumber, raw, aclName ?? string.Empty, action, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, comment);
+            return new AclEntry(
+                lineNumber,
+                0,
+                raw,
+                aclName ?? string.Empty,
+                string.Empty,
+                action,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                comment,
+                false);
         }
 
         if (!IsActionToken(action))
@@ -321,7 +399,22 @@
 
         index++;
         var protocol = index < tokens.Length ? tokens[index].ToLowerInvariant() : "ip";
-        index++;
+        if (protocol is "object" or "object-group")
+        {
+            if (index + 1 < tokens.Length)
+            {
+                protocol = $"{protocol} {tokens[index + 1]}";
+                index += 2;
+            }
+            else
+            {
+                index++;
+            }
+        }
+        else
+        {
+            index++;
+        }
 
         var (source, afterSource) = ParseAddress(tokens, index);
         index = afterSource;
@@ -342,8 +435,24 @@
         }
 
         var options = index < tokens.Length ? string.Join(' ', tokens.Skip(index)) : string.Empty;
+        var log = ContainsLog(tokens, index);
+        var iface = ExtractInterface(source, destination, options);
 
-        return new AclEntry(lineNumber, raw, aclName ?? string.Empty, action, protocol, source, sourcePort, destination, destinationPort, options, string.Empty);
+        return new AclEntry(
+            lineNumber,
+            0,
+            raw,
+            aclName ?? string.Empty,
+            iface,
+            action,
+            protocol,
+            source,
+            sourcePort,
+            destination,
+            destinationPort,
+            options,
+            string.Empty,
+            log);
     }
 
     private static (string Value, int NextIndex) ParseAddress(string[] tokens, int start)
@@ -432,6 +541,46 @@
         return System.Net.IPAddress.TryParse(token, out _);
     }
 
+    private static bool ContainsLog(string[] tokens, int start)
+    {
+        for (var i = start; i < tokens.Length; i++)
+        {
+            if (tokens[i].Equals("log", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string ExtractInterface(string source, string destination, string options)
+    {
+        if (source.StartsWith("interface ", StringComparison.OrdinalIgnoreCase))
+        {
+            return source.Substring("interface ".Length);
+        }
+
+        if (destination.StartsWith("interface ", StringComparison.OrdinalIgnoreCase))
+        {
+            return destination.Substring("interface ".Length);
+        }
+
+        if (options.Contains("interface ", StringComparison.OrdinalIgnoreCase))
+        {
+            var parts = options.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            for (var i = 0; i < parts.Length - 1; i++)
+            {
+                if (parts[i].Equals("interface", StringComparison.OrdinalIgnoreCase))
+                {
+                    return parts[i + 1];
+                }
+            }
+        }
+
+        return string.Empty;
+    }
+
     private static Color GetActionColor(string action)
     {
         return action switch
@@ -443,20 +592,121 @@
         };
     }
 
-    private static string GetRowClass(AclEntry entry, int index)
+    private string GetRowClass(AclEntry entry, int index)
     {
-        return entry.Action switch
+        var baseClass = entry.Action switch
         {
             "deny" => "acl-row-deny",
             "remark" => "acl-row-remark",
             _ => string.Empty
         };
+
+        if (SelectedEntry is not null && entry.Occurrence == SelectedEntry.Occurrence)
+        {
+            return string.IsNullOrWhiteSpace(baseClass) ? "acl-row-selected" : $"{baseClass} acl-row-selected";
+        }
+
+        return baseClass;
+    }
+
+    private void HandleRowClick(TableRowClickEventArgs<AclEntry> args)
+    {
+        SelectedEntry = args.Item;
+        BuildDetailRows();
+    }
+
+    private void BuildDetailRows()
+    {
+        DetailRows.Clear();
+
+        if (SelectedEntry is null)
+        {
+            return;
+        }
+
+        DetailRows.Add(new AclDetailRow(
+            DescribeProtocol(SelectedEntry),
+            DescribeAddress(SelectedEntry.Source),
+            DescribeAddress(SelectedEntry.Destination),
+            DescribeDestinationPort(SelectedEntry)));
+    }
+
+    private static string DescribeProtocol(AclEntry entry)
+    {
+        if (string.IsNullOrWhiteSpace(entry.Protocol))
+        {
+            return "Not set";
+        }
+
+        if (entry.Protocol.StartsWith("object-group ", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Service group: {entry.Protocol.Replace("object-group ", string.Empty, StringComparison.OrdinalIgnoreCase)}";
+        }
+
+        if (entry.Protocol.StartsWith("object ", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Service object: {entry.Protocol.Replace("object ", string.Empty, StringComparison.OrdinalIgnoreCase)}";
+        }
+
+        return $"Protocol: {entry.Protocol}";
+    }
+
+    private static string DescribeAddress(string address)
+    {
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            return "Not set";
+        }
+
+        if (address.Equals("any", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Any";
+        }
+
+        if (address.StartsWith("host ", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Host: {address.Replace("host ", string.Empty, StringComparison.OrdinalIgnoreCase)}";
+        }
+
+        if (address.StartsWith("object-group ", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Object group: {address.Replace("object-group ", string.Empty, StringComparison.OrdinalIgnoreCase)}";
+        }
+
+        if (address.StartsWith("object ", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Object: {address.Replace("object ", string.Empty, StringComparison.OrdinalIgnoreCase)}";
+        }
+
+        if (address.StartsWith("interface ", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Interface: {address.Replace("interface ", string.Empty, StringComparison.OrdinalIgnoreCase)}";
+        }
+
+        return $"Network: {address}";
+    }
+
+    private static string DescribeDestinationPort(AclEntry entry)
+    {
+        if (!string.IsNullOrWhiteSpace(entry.DestinationPort))
+        {
+            return $"Port: {entry.DestinationPort}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Remark))
+        {
+            return $"Remark: {entry.Remark}";
+        }
+
+        return "Not set";
     }
 
     private sealed record AclEntry(
         int LineNumber,
+        int Occurrence,
         string Raw,
         string AclName,
+        string Interface,
         string Action,
         string Protocol,
         string Source,
@@ -464,5 +714,12 @@
         string Destination,
         string DestinationPort,
         string Options,
-        string Comment);
+        string Remark,
+        bool Log);
+
+    private sealed record AclDetailRow(
+        string ProtocolInfo,
+        string SourceInfo,
+        string DestinationInfo,
+        string DestinationPortInfo);
 }
