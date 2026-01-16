@@ -301,11 +301,6 @@
         color: rgba(255, 255, 255, 0.85);
     }
 
-    .acl-upload-grid {
-        align-items: stretch;
-    }
-
-
     .acl-file-panel {
         background: rgba(255, 255, 255, 0.04);
         border: 1px solid rgba(255, 255, 255, 0.08);
@@ -364,11 +359,6 @@
         outline-offset: -2px;
     }
 
-    .acl-table-scroll {
-        flex: 1 1 auto;
-        min-height: 0;
-    }
-
     .acl-detail-scroll {
         flex: 1 1 auto;
         min-height: 0;
@@ -416,6 +406,14 @@
         line-height: 0.9;
     }
 
+    .acl-detail-table .mud-chip {
+        margin: 0;
+    }
+
+    .acl-detail-table .mud-chip-content {
+        padding: 0 6px;
+    }
+
     .acl-tree-prefix {
         margin-right: 4px;
         font-size: 1.25em;
@@ -431,29 +429,10 @@
         white-space: pre;
     }
 
-    .acl-summary-row {
-        justify-content: space-between;
-        width: 100%;
-    }
-
-    .acl-logfiles {
-        flex-wrap: wrap;
-        align-items: center;
-    }
-
-    .acl-summary-right {
-        margin-left: auto;
-        justify-content: flex-end;
-    }
-
     .acl-rules-header {
         justify-content: space-between;
         gap: 12px;
         width: 100%;
-    }
-
-    .acl-rules-chips {
-        margin-left: auto;
     }
 
     .acl-rules-title {
