@@ -1,96 +1,178 @@
-@page "/acl-parser"
+@page "/ACLParser/ACLParser"
+@using System.Text.RegularExpressions
+@using System.ComponentModel.DataAnnotations
+@using System.Globalization
+@using System.Security.Policy
 @using System.Text
 @using System.Net
 @using Microsoft.AspNetCore.Components.Web
-@using Microsoft.JSInterop
-@implements IAsyncDisposable
-@inject IJSRuntime JS
+
+<PageHeader PageTitle="ACL Parser" />
+
+@inherits PageBase;
 
 <PageTitle>ACL Parser</PageTitle>
+
+@code{
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            Log.Debug("Importing ./Components/Pages/ACLParser/ACLParser.razor.js");
+            jsModule = await _jsRuntime.InvokeAsync<IJSObjectReference>("import",
+                "./Components/Pages/ACLParser/ACLParser.razor.js");
+            Log.Debug("./Components/Pages/ACLParser/ACLParser.razor.js Imported!");
+        }
+    }
+
+    private async Task HandleFolderSelected(InputFileChangeEventArgs args)
+    {
+        IsLoading = true;
+        ParseWarnings.Clear();
+        Entries.Clear();
+        DetailRows.Clear();
+        LogFiles.Clear();
+        LogFileTree.Clear();
+        SelectedEntry = null;
+
+        try
+        {
+
+            var files = args.GetMultipleFiles(200);
+            var relativePaths = Array.Empty<string>();
+            if (FolderInput is not null)
+            {
+                if (jsModule is not null)
+                {
+                    relativePaths = await jsModule.InvokeAsync<string[]>(
+                        "getRelativePaths",
+                        FolderInput.Element
+                    );
+                }
+            }
+            LogFileEntry? firstLogFile = null;
+            for (var i = 0; i < files.Count; i++)
+            {
+                var file = files[i];
+                if (!file.Name.EndsWith(".log", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var relativePath = i < relativePaths.Length ? relativePaths[i] : file.Name;
+                if (string.IsNullOrWhiteSpace(relativePath))
+                {
+                    relativePath = file.Name;
+                }
+
+                var entry = new LogFileEntry(file.Name, file, relativePath);
+                LogFiles.Add(entry);
+                firstLogFile ??= entry;
+            }
+
+            if (LogFiles.Count == 0)
+            {
+                ParseWarnings.Add("No .log files found in the selected folder.");
+                return;
+            }
+
+            UploadedFileName = $"{LogFiles.Count} log file(s) found";
+            BuildLogFileTree();
+        }
+        catch (Exception ex)
+        {
+            ParseWarnings.Add($"Unable to parse file: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+}
 
 <MudContainer MaxWidth="MaxWidth.False" Class="py-6 acl-parser-page">
     <MudGrid GutterSize="3">
         <MudItem xs="12" md="3" lg="2">
             <MudPaper Elevation="2" Class="p-4">
-            <MudStack Spacing="2">
-                <MudText Typo="Typo.h5" Class="font-weight-bold">Cisco ACL Parser</MudText>
-                <MudText Typo="Typo.body2" Class="text-secondary">
-                    Drop a Cisco ACL config file to extract source, destination, protocol, and rule metadata.
-                </MudText>
-                <MudStack Spacing="2" Class="acl-upload-stack">
-                    <div class="acl-drop-zone">
-                        <InputFile @ref="FolderInput"
-                                   OnChange="HandleFolderSelected"
-                                   class="acl-drop-input"
-                                   accept=".log,.txt,.cfg,.conf,.acl"
-                                   multiple
-                                   webkitdirectory />
-                        <div class="acl-drop-content">
-                            <MudIcon Icon="@Icons.Material.Filled.FolderOpen" Class="acl-drop-icon" />
-                            <MudText Typo="Typo.h6" Class="font-weight-bold">Choose a log folder</MudText>
-                            <MudText Typo="Typo.subtitle2" Class="acl-drop-hint">Drag a folder here or click to browse</MudText>
+                <MudStack Spacing="2">
+                    <MudText Typo="Typo.h5" Class="font-weight-bold">Cisco ACL Parser</MudText>
+                    <MudText Typo="Typo.body2" Class="text-secondary">
+                        Drop a Cisco ACL config file to extract source, destination, protocol, and rule metadata.
+                    </MudText>
+                    <MudStack Spacing="2" >
+                        <div class="acl-drop-zone">
+                            <InputFile @ref="FolderInput"
+                                       OnChange="HandleFolderSelected"
+                                       class="acl-drop-input"
+                                       accept=".log,.txt,.cfg,.conf,.acl"
+                                       multiple
+                                       webkitdirectory />
+                            <div class="acl-drop-content">
+                                <MudIcon Icon="@Icons.Material.Filled.FolderOpen" Class="acl-drop-icon" />
+                                <MudText Typo="Typo.h6" Class="font-weight-bold">Choose a log folder</MudText>
+                                <MudText Typo="Typo.subtitle2" Class="acl-drop-hint">Drag a folder here or click to browse</MudText>
+                            </div>
                         </div>
-                    </div>
-                    <MudPaper Elevation="0" Class="acl-file-panel">
-                        <MudStack Spacing="1">
-                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
-                                <MudText Typo="Typo.subtitle2" Class="font-weight-bold">Log files</MudText>
-                                @if (LogFiles.Count > 0)
+                        <MudPaper Elevation="0" Class="acl-file-panel">
+                            <MudStack Spacing="1">
+                                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                                    <MudText Typo="Typo.subtitle2" Class="font-weight-bold">Log files</MudText>
+                                    @if (LogFiles.Count > 0)
+                                    {
+                                        <MudChip T="string" Variant="Variant.Outlined" Size="Size.Small">
+                                            @LogFiles.Count
+                                        </MudChip>
+                                    }
+                                </MudStack>
+                                @if (LogFileTree.Count > 0)
                                 {
-                                    <MudChip T="string" Variant="Variant.Outlined" Size="Size.Small">
-                                        @LogFiles.Count
-                                    </MudChip>
+                                    <MudList T="LogTreeNode" Dense="true" Class="acl-file-tree">
+                                        @RenderLogTree(LogFileTree, 0)
+                                    </MudList>
+                                }
+                                else if (LogFiles.Count > 0)
+                                {
+                                    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
+                                        Unable to render folder tree. Showing flat file list instead.
+                                    </MudAlert>
+                                    <MudList T="LogFileEntry" Dense="true" Class="acl-file-tree">
+                                        @foreach (var file in LogFiles)
+                                        {
+                                            <MudListItem T="LogFileEntry"
+                                                         OnClick="@(() => SelectLogFile(file))"
+                                                         Class="@(UploadedFileName == file.DisplayName ? "acl-file-active" : string.Empty)">
+                                                <MudText Typo="Typo.body2">@file.RelativePath</MudText>
+                                            </MudListItem>
+                                        }
+                                    </MudList>
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.caption" Class="text-secondary">
+                                        Select a folder to list available .log files.
+                                    </MudText>
                                 }
                             </MudStack>
-                            @if (LogFileTree.Count > 0)
+                        </MudPaper>
+                    </MudStack>
+                    @if (IsLoading)
+                    {
+                        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+                    }
+                    else if (Entries.Count > 0)
+                    {
+                    }
+                    @if (ParseWarnings.Count > 0)
+                    {
+                        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
+                            @foreach (var warning in ParseWarnings)
                             {
-                                <MudList T="LogTreeNode" Dense="true" Class="acl-file-tree">
-                                    @RenderLogTree(LogFileTree, 0)
-                                </MudList>
+                                <div>@warning</div>
                             }
-                            else if (LogFiles.Count > 0)
-                            {
-                                <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
-                                    Unable to render folder tree. Showing flat file list instead.
-                                </MudAlert>
-                                <MudList T="LogFileEntry" Dense="true" Class="acl-file-tree">
-                                    @foreach (var file in LogFiles)
-                                    {
-                                        <MudListItem T="LogFileEntry"
-                                                     OnClick="@(() => SelectLogFile(file))"
-                                                     Class="@(UploadedFileName == file.DisplayName ? "acl-file-active" : string.Empty)">
-                                            <MudText Typo="Typo.body2">@file.RelativePath</MudText>
-                                        </MudListItem>
-                                    }
-                                </MudList>
-                            }
-                            else
-                            {
-                                <MudText Typo="Typo.caption" Class="text-secondary">
-                                    Select a folder to list available .log files.
-                                </MudText>
-                            }
-                        </MudStack>
-                    </MudPaper>
+                        </MudAlert>
+                    }
                 </MudStack>
-                @if (IsLoading)
-                {
-                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
-                }
-                else if (Entries.Count > 0)
-                {
-                }
-                @if (ParseWarnings.Count > 0)
-                {
-                    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
-                        @foreach (var warning in ParseWarnings)
-                        {
-                            <div>@warning</div>
-                        }
-                    </MudAlert>
-                }
-            </MudStack>
-        </MudPaper>
+            </MudPaper>
         </MudItem>
         <MudItem xs="12" md="9" lg="10" Class="acl-right-column">
             <MudStack Spacing="3" Class="acl-right-stack">
@@ -129,67 +211,67 @@
                             </MudPaper>
                         }
                     </MudStack>
-                    
-                        <MudTable Items="Entries"
-                                  Dense="true"
-                                  Hover="true"
-                                  Striped="true"
-                                  RowClassFunc="GetRowClass"
-                                  OnRowClick="@((TableRowClickEventArgs<AclEntry> args) => HandleRowClick(args))"
-                                  FixedHeader="true"
-                                  Height="var(--acl-table-height)">
-                            <HeaderContent>
-                                <MudTh>#</MudTh>
-                                <MudTh>ACL Name</MudTh>
-                                <MudTh>Interface</MudTh>
-                                <MudTh>Action</MudTh>
-                                <MudTh>Protocol</MudTh>
-                                <MudTh>Source</MudTh>
-                                <MudTh>Dest</MudTh>
-                                <MudTh>Dest Port</MudTh>
-                                <MudTh>Remark</MudTh>
-                                <MudTh>Log</MudTh>
-                                <MudTh></MudTh>
-                            </HeaderContent>
-                            <RowTemplate>
-                                @{
-                                    var ruleViolations = GetRuleViolations(context);
+
+                    <MudTable Items="Entries"
+                              Dense="true"
+                              Hover="true"
+                              Striped="true"
+                              RowClassFunc="GetRowClass"
+                              OnRowClick="@((TableRowClickEventArgs<AclEntry> args) => HandleRowClick(args))"
+                              FixedHeader="true"
+                              Height="var(--acl-table-height)">
+                        <HeaderContent>
+                            <MudTh>#</MudTh>
+                            <MudTh>ACL Name</MudTh>
+                            <MudTh>Interface</MudTh>
+                            <MudTh>Action</MudTh>
+                            <MudTh>Protocol</MudTh>
+                            <MudTh>Source</MudTh>
+                            <MudTh>Dest</MudTh>
+                            <MudTh>Dest Port</MudTh>
+                            <MudTh>Remark</MudTh>
+                            <MudTh>Log</MudTh>
+                            <MudTh></MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            @{
+                                var ruleViolations = GetRuleViolations(context);
+                            }
+                            <MudTd DataLabel="#">@context.Occurrence</MudTd>
+                            <MudTd DataLabel="ACL Name">@context.AclName</MudTd>
+                            <MudTd DataLabel="Interface">@context.Interface</MudTd>
+                            <MudTd DataLabel="Action">
+                                <MudChip T="string" Color="@GetActionColor(context.Action)" Variant="Variant.Filled" Size="Size.Small">
+                                    @context.Action
+                                </MudChip>
+                            </MudTd>
+                            <MudTd DataLabel="Protocol">@context.Protocol</MudTd>
+                            <MudTd DataLabel="Source">@context.Source</MudTd>
+                            <MudTd DataLabel="Dest">@context.Destination</MudTd>
+                            <MudTd DataLabel="Dest Port">@context.DestinationPort</MudTd>
+                            <MudTd DataLabel="Remark">@context.Remark</MudTd>
+                            <MudTd DataLabel="Log">
+                                @if (context.Log)
+                                {
+                                    <MudChip T="string" Color="Color.Info" Variant="Variant.Filled" Size="Size.Small">log</MudChip>
                                 }
-                                <MudTd DataLabel="#">@context.Occurrence</MudTd>
-                                <MudTd DataLabel="ACL Name">@context.AclName</MudTd>
-                                <MudTd DataLabel="Interface">@context.Interface</MudTd>
-                                <MudTd DataLabel="Action">
-                                    <MudChip T="string" Color="@GetActionColor(context.Action)" Variant="Variant.Filled" Size="Size.Small">
-                                        @context.Action
-                                    </MudChip>
-                                </MudTd>
-                                <MudTd DataLabel="Protocol">@context.Protocol</MudTd>
-                                <MudTd DataLabel="Source">@context.Source</MudTd>
-                                <MudTd DataLabel="Dest">@context.Destination</MudTd>
-                                <MudTd DataLabel="Dest Port">@context.DestinationPort</MudTd>
-                                <MudTd DataLabel="Remark">@context.Remark</MudTd>
-                                <MudTd DataLabel="Log">
-                                    @if (context.Log)
-                                    {
-                                        <MudChip T="string" Color="Color.Info" Variant="Variant.Filled" Size="Size.Small">log</MudChip>
-                                    }
-                                </MudTd>
-                                <MudTd DataLabel="Violations">
-                                    @if (ruleViolations.Count > 0)
-                                    {
-                                        <MudTooltip Text="@string.Join(", ", ruleViolations)">
-                                            <MudIcon Icon="@Icons.Material.Filled.ReportProblem"
-                                                     Color="Color.Warning"
-                                                     Size="Size.Small" />
-                                        </MudTooltip>
-                                    }
-                                </MudTd>
-                            </RowTemplate>
-                            <NoRecordsContent>
-                                <MudText Typo="Typo.body2" Class="text-secondary">Upload a config to see parsed ACL rules.</MudText>
-                            </NoRecordsContent>
-                        </MudTable>
-                    
+                            </MudTd>
+                            <MudTd DataLabel="Violations">
+                                @if (ruleViolations.Count > 0)
+                                {
+                                    <MudTooltip Text="@string.Join(", ", ruleViolations)">
+                                        <MudIcon Icon="@Icons.Material.Filled.ReportProblem"
+                                                 Color="Color.Warning"
+                                                 Size="Size.Small" />
+                                    </MudTooltip>
+                                }
+                            </MudTd>
+                        </RowTemplate>
+                        <NoRecordsContent>
+                            <MudText Typo="Typo.body2" Class="text-secondary">Upload a config to see parsed ACL rules.</MudText>
+                        </NoRecordsContent>
+                    </MudTable>
+
                 </MudPaper>
 
                 <MudPaper Elevation="2" Class="p-4 acl-panel acl-panel-scroll">
@@ -262,190 +344,11 @@
     </MudGrid>
 </MudContainer>
 
-<style>
-    .acl-drop-zone {
-        position: relative;
-        border: 2px dashed rgba(0, 0, 0, 0.25);
-        border-radius: 16px;
-        padding: 28px;
-        min-height: 190px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: linear-gradient(135deg, rgba(222, 232, 255, 0.45), rgba(255, 244, 218, 0.55));
-    }
 
-    .acl-drop-input {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        opacity: 0;
-        cursor: pointer;
-    }
 
-    .acl-drop-content {
-        text-align: center;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        align-items: center;
-    }
-
-    .acl-drop-icon {
-        font-size: 34px;
-        opacity: 0.7;
-    }
-
-    .acl-drop-hint {
-        color: rgba(255, 255, 255, 0.85);
-    }
-
-    .acl-file-panel {
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 12px;
-        height: 100%;
-    }
-
-    .acl-file-tree {
-        max-height: 320px;
-        overflow: auto;
-    }
-
-    .acl-file-active {
-        background-color: rgba(33, 150, 243, 0.12);
-        border-radius: 8px;
-    }
-
-    .acl-tree-item {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding-left: calc(var(--depth, 0) * 16px);
-        color: var(--mud-palette-text-primary);
-    }
-
-    .acl-tree-folder {
-        opacity: 0.85;
-    }
-
-    .acl-tree-row {
-        cursor: pointer;
-    }
-
-    .acl-tree-text {
-        font-size: 0.875rem;
-    }
-
-    .acl-violation-summary {
-        background: rgba(255, 193, 7, 0.08);
-        border: 1px solid rgba(255, 193, 7, 0.18);
-        border-radius: 10px;
-        padding: 8px 10px;
-    }
-
-    .acl-row-deny {
-        background-color: rgba(244, 67, 54, 0.08);
-    }
-
-    .acl-row-remark {
-        background-color: rgba(158, 158, 158, 0.08);
-    }
-
-    .acl-row-selected {
-        outline: 2px solid rgba(33, 150, 243, 0.35);
-        outline-offset: -2px;
-    }
-
-    .acl-detail-scroll {
-        flex: 1 1 auto;
-        min-height: 0;
-    }
-
-    .acl-panel {
-        display: flex;
-        flex-direction: column;
-        min-height: 0;
-    }
-
-    .acl-panel-scroll {
-        flex: 1 1 0;
-        min-height: 0;
-    }
-
-    .acl-right-stack {
-        display: flex;
-        flex-direction: column;
-        height: 100%;
-        min-height: 0;
-    }
-
-    .acl-right-column {
-        min-height: 0;
-        --acl-table-height: clamp(220px, 32vh, 520px);
-    }
-
-    @@media (min-width: 960px) {
-        .acl-right-column {
-            height: calc(100vh - 160px);
-        }
-    }
-
-    .acl-detail-cell {
-        white-space: pre-wrap;
-        line-height: 0.9;
-    }
-
-    .acl-detail-table .mud-table-cell {
-        padding: 0 6px;
-    }
-
-    .acl-detail-table .mud-table-row {
-        line-height: 0.9;
-    }
-
-    .acl-detail-table .mud-chip {
-        margin: 0;
-    }
-
-    .acl-detail-table .mud-chip-content {
-        padding: 0 6px;
-    }
-
-    .acl-tree-prefix {
-        margin-right: 4px;
-        font-size: 1.25em;
-        line-height: 0.9;
-        display: inline-block;
-        margin-top: -1px;
-        margin-bottom: -1px;
-    }
-
-    .acl-tree-prefix {
-        color: currentColor;
-        font-family: "Courier New", monospace;
-        white-space: pre;
-    }
-
-    .acl-rules-header {
-        justify-content: space-between;
-        gap: 12px;
-        width: 100%;
-    }
-
-    .acl-rules-title {
-        color: var(--mud-palette-primary);
-        letter-spacing: 0.3px;
-        line-height: 1.1;
-    }
-</style>
 
 @code {
-    private const string AclModulePath = "/Pages/ACL%20Parser/acl-parser.js";
-    private IJSObjectReference? AclModule;
-
+    private IJSObjectReference jsModule { get; set; } = null!;
     private static readonly Dictionary<string, int> InsecureServicePorts = new(StringComparer.OrdinalIgnoreCase)
     {
         ["ftp"] = 21,
@@ -479,67 +382,7 @@
     private AclEntry? SelectedEntry;
     private InputFile? FolderInput;
 
-    private async Task HandleFolderSelected(InputFileChangeEventArgs args)
-    {
-        IsLoading = true;
-        ParseWarnings.Clear();
-        Entries.Clear();
-        DetailRows.Clear();
-        LogFiles.Clear();
-        LogFileTree.Clear();
-        SelectedEntry = null;
 
-        try
-        {
-            if (AclModule is null)
-            {
-                AclModule = await JS.InvokeAsync<IJSObjectReference>("import", AclModulePath);
-            }
-
-            var files = args.GetMultipleFiles(200);
-            var relativePaths = Array.Empty<string>();
-            if (FolderInput is not null)
-            {
-                relativePaths = await AclModule.InvokeAsync<string[]>("getRelativePaths", FolderInput.Element);
-            }
-            LogFileEntry? firstLogFile = null;
-            for (var i = 0; i < files.Count; i++)
-            {
-                var file = files[i];
-                if (!file.Name.EndsWith(".log", StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                var relativePath = i < relativePaths.Length ? relativePaths[i] : file.Name;
-                if (string.IsNullOrWhiteSpace(relativePath))
-                {
-                    relativePath = file.Name;
-                }
-
-                var entry = new LogFileEntry(file.Name, file, relativePath);
-                LogFiles.Add(entry);
-                firstLogFile ??= entry;
-            }
-
-            if (LogFiles.Count == 0)
-            {
-                ParseWarnings.Add("No .log files found in the selected folder.");
-                return;
-            }
-
-            UploadedFileName = $"{LogFiles.Count} log file(s) found";
-            BuildLogFileTree();
-        }
-        catch (Exception ex)
-        {
-            ParseWarnings.Add($"Unable to parse file: {ex.Message}");
-        }
-        finally
-        {
-            IsLoading = false;
-        }
-    }
 
     private async Task SelectLogFile(LogFileEntry entry)
     {
@@ -2385,12 +2228,193 @@
         public static AddressInfo Network(IPAddress address, int prefixLength) => new(false, false, true, address, prefixLength);
         public static AddressInfo Unknown() => new(false, false, false, null, null);
     }
+}
 
-    public async ValueTask DisposeAsync()
-    {
-        if (AclModule is not null)
-        {
-            await AclModule.DisposeAsync();
+<style>
+
+
+    .acl-drop-zone {
+        position: relative;
+        border: 2px rgba(0, 0, 0, 0.25);
+        border-radius: 16px;
+        padding: 28px;
+        min-height: 190px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(var(--custom-rotation), var(--mud-palette-primary), var(--mud-palette-primary-darken));
+        --custom-rotation: 135deg;
+        transition: --custom-rotation 0.3s ease, border 0.1s ease;
+    }
+
+    .acl-drop-zone:hover {
+        --custom-rotation: 180deg;
+        border: 2px inset var(--mud-palette-primary);
+    }
+
+    .acl-drop-input {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
+    }
+
+    .acl-drop-content {
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .acl-drop-icon {
+        font-size: 34px;
+        opacity: 0.7;
+    }
+
+    .acl-drop-hint {
+        color: rgba(255, 255, 255, 0.85);
+    }
+
+    .acl-file-panel {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 12px;
+        height: 100%;
+    }
+
+    .acl-file-tree {
+        max-height: 320px;
+        overflow: auto;
+    }
+
+    .acl-file-active {
+        background-color: rgba(33, 150, 243, 0.12);
+        border-radius: 8px;
+    }
+
+    .acl-tree-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding-left: calc(var(--depth, 0) * 16px);
+        color: var(--mud-palette-text-primary);
+    }
+
+    .acl-tree-folder {
+        opacity: 0.85;
+    }
+
+    .acl-tree-row {
+        cursor: pointer;
+    }
+
+    .acl-tree-text {
+        font-size: 0.875rem;
+    }
+
+    .acl-violation-summary {
+        background: rgba(255, 193, 7, 0.08);
+        border: 1px solid rgba(255, 193, 7, 0.18);
+        border-radius: 10px;
+        padding: 8px 10px;
+    }
+
+    .acl-row-deny {
+        background-color: rgba(244, 67, 54, 0.08);
+    }
+
+    .acl-row-remark {
+        background-color: rgba(158, 158, 158, 0.08);
+    }
+
+    .acl-row-selected {
+        outline: 2px solid rgba(33, 150, 243, 0.35);
+        outline-offset: -2px;
+    }
+
+    .acl-detail-scroll {
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+
+    .acl-panel {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    .acl-panel-scroll {
+        flex: 1 1 0;
+        min-height: 0;
+    }
+
+    .acl-right-stack {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
+    }
+
+    .acl-right-column {
+        min-height: 0;
+        --acl-table-height: clamp(220px, 32vh, 520px);
+    }
+
+    @@media (min-width: 960px) {
+        .acl-right-column {
+            height: calc(100vh - 160px);
         }
     }
-}
+
+    .acl-detail-cell {
+        white-space: pre-wrap;
+        line-height: 0.9;
+    }
+
+    .acl-detail-table .mud-table-cell {
+        padding: 0 6px;
+    }
+
+    .acl-detail-table .mud-table-row {
+        line-height: 0.9;
+    }
+
+    .acl-detail-table .mud-chip {
+        margin: 0;
+    }
+
+    .acl-detail-table .mud-chip-content {
+        padding: 0 6px;
+    }
+
+    .acl-tree-prefix {
+        margin-right: 4px;
+        font-size: 1.25em;
+        line-height: 0.9;
+        display: inline-block;
+        margin-top: -1px;
+        margin-bottom: -1px;
+    }
+
+    .acl-tree-prefix {
+        color: currentColor;
+        font-family: "Courier New", monospace;
+        white-space: pre;
+    }
+
+    .acl-rules-header {
+        justify-content: space-between;
+        gap: 12px;
+        width: 100%;
+    }
+
+    .acl-rules-title {
+        color: var(--mud-palette-primary);
+        letter-spacing: 0.3px;
+        line-height: 1.1;
+    }
+</style>
