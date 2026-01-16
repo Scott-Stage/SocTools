@@ -23,6 +23,12 @@
             jsModule = await _jsRuntime.InvokeAsync<IJSObjectReference>("import",
                 "./Components/Pages/ACL Parser/ACLParser.razor.js");
         }
+
+        if (jsModule is not null && _pendingSplineLayout)
+        {
+            _pendingSplineLayout = false;
+            await jsModule.InvokeVoidAsync("renderCrossZoneSplines", DetailScrollRef);
+        }
     }
 
     private async Task HandleFolderSelected(InputFileChangeEventArgs args)
@@ -230,7 +236,6 @@
                             <MudTh>Dest</MudTh>
                             <MudTh>Dest Port</MudTh>
                             <MudTh>Remark</MudTh>
-                            <MudTh>Log</MudTh>
                             <MudTh></MudTh>
                         </HeaderContent>
                         <RowTemplate>
@@ -250,12 +255,6 @@
                             <MudTd DataLabel="Dest">@context.Destination</MudTd>
                             <MudTd DataLabel="Dest Port">@context.DestinationPort</MudTd>
                             <MudTd DataLabel="Remark">@context.Remark</MudTd>
-                            <MudTd DataLabel="Log">
-                                @if (context.Log)
-                                {
-                                    <MudChip T="string" Color="Color.Info" Variant="Variant.Filled" Size="Size.Small">log</MudChip>
-                                }
-                            </MudTd>
                             <MudTd DataLabel="Violations">
                                 @if (ruleViolations.Count > 0)
                                 {
@@ -276,61 +275,93 @@
 
                 <MudPaper Elevation="2" Class="p-4 acl-panel acl-panel-scroll">
                     <MudText Typo="Typo.subtitle1" Class="font-weight-bold mb-2">Rule Details</MudText>
-                    <div class="acl-detail-scroll">
+                    <div class="acl-detail-scroll" @ref="DetailScrollRef">
+                        <svg class="acl-cross-zone-svg" aria-hidden="true"></svg>
                         <MudTable Items="DetailRows" Dense="true" Hover="true" Striped="false" Class="acl-detail-table" FixedHeader="true" Height="var(--acl-table-height)">
                             <HeaderContent>
                                 <MudTh>Protocol Info</MudTh>
                                 <MudTh>Source Info</MudTh>
                                 <MudTh>Destination Info</MudTh>
                                 <MudTh>Dest. Port Info</MudTh>
-                                <MudTh>Violations</MudTh>
                             </HeaderContent>
                             <RowTemplate>
+                                @{
+                                    var hasInsecureService = context.Violations.Contains("Insecure service");
+                                    var hasOverPermissive = context.Violations.Contains("Over-permissive");
+                                    var destMarkerClass = string.IsNullOrWhiteSpace(context.DestinationPrefix)
+                                        ? "acl-cross-zone-dest-marker acl-cross-zone-dest-marker-root"
+                                        : "acl-cross-zone-dest-marker";
+                                    var protocolInsecureMatches = hasInsecureService
+                                        ? GetInsecureServiceMatches(context.ProtocolInfo)
+                                        : Array.Empty<InsecureMatch>();
+                                    var destinationPortInsecureMatches = hasInsecureService &&
+                                            !string.IsNullOrWhiteSpace(context.DestinationPortInfo) &&
+                                            !context.DestinationPortInfo.Equals("Not set", StringComparison.OrdinalIgnoreCase)
+                                        ? GetInsecureServiceMatches(context.DestinationPortInfo)
+                                        : Array.Empty<InsecureMatch>();
+                                }
                                 <MudTd DataLabel="Protocol Info">
                                     <div class="acl-detail-cell">
                                         <span class="acl-tree-prefix">@context.ProtocolPrefix</span>@context.ProtocolInfo
+                                        @if (protocolInsecureMatches.Count > 0)
+                                        {
+                                            <span class="acl-detail-warning">
+                                                <MudTooltip Text="@BuildInsecureServiceTooltip(protocolInsecureMatches)">
+                                                    <MudIcon Icon="@Icons.Material.Filled.ReportProblem" Color="Color.Warning" Size="Size.Small" />
+                                                </MudTooltip>
+                                            </span>
+                                        }
                                     </div>
                                 </MudTd>
                                 <MudTd DataLabel="Source Info">
                                     <div class="acl-detail-cell">
-                                        <span class="acl-tree-prefix">@context.SourcePrefix</span>@context.SourceInfo
+                                        <span class="acl-tree-prefix">@context.SourcePrefix</span>@context.SourceInfo@if (!string.IsNullOrWhiteSpace(context.SourceCrossZonePairs))
+                                        {
+                                            <MudTooltip Text="@BuildCrossZoneTooltip(context.SourceCrossZonePairs)">
+                                                <span class="acl-cross-zone-source-marker" data-cross-zone-pairs="@context.SourceCrossZonePairs"></span>
+                                            </MudTooltip>
+                                        }
+                                        else
+                                        {
+                                            <span class="acl-cross-zone-source-marker"></span>
+                                        }
                                     </div>
                                 </MudTd>
                                 <MudTd DataLabel="Destination Info">
                                     <div class="acl-detail-cell">
+                                        @if (!string.IsNullOrWhiteSpace(context.DestinationCrossZonePairs))
+                                        {
+                                            <MudTooltip Text="@BuildCrossZoneTooltip(context.DestinationCrossZonePairs)">
+                                                <span class="@destMarkerClass" data-cross-zone-pairs="@context.DestinationCrossZonePairs" data-cross-zone-tooltip="@BuildCrossZoneTooltip(context.DestinationCrossZonePairs)"></span>
+                                            </MudTooltip>
+                                        }
+                                        else
+                                        {
+                                            <span class="@destMarkerClass"></span>
+                                        }
                                         <span class="acl-tree-prefix">@context.DestinationPrefix</span>@context.DestinationInfo
+                                        @if (hasOverPermissive)
+                                        {
+                                            <span class="acl-detail-warning">
+                                                <MudTooltip Text="Over-permissive">
+                                                    <MudIcon Icon="@Icons.Material.Filled.ReportProblem" Color="Color.Warning" Size="Size.Small" />
+                                                </MudTooltip>
+                                            </span>
+                                        }
                                     </div>
                                 </MudTd>
                                 <MudTd DataLabel="Dest. Port Info">
                                     <div class="acl-detail-cell">
                                         <span class="acl-tree-prefix">@context.DestinationPortPrefix</span>@context.DestinationPortInfo
+                                        @if (destinationPortInsecureMatches.Count > 0)
+                                        {
+                                            <span class="acl-detail-warning">
+                                                <MudTooltip Text="@BuildInsecureServiceTooltip(destinationPortInsecureMatches)">
+                                                    <MudIcon Icon="@Icons.Material.Filled.ReportProblem" Color="Color.Warning" Size="Size.Small" />
+                                                </MudTooltip>
+                                            </span>
+                                        }
                                     </div>
-                                </MudTd>
-                                <MudTd DataLabel="Violations">
-                                    @if (context.Violations.Count > 0)
-                                    {
-                                        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
-                                            @foreach (var violation in context.Violations)
-                                            {
-                                                if (violation == "Any to Any")
-                                                {
-                                                    <MudChip T="string" Color="Color.Warning" Variant="Variant.Outlined" Size="Size.Small">
-                                                        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
-                                                            <MudText Typo="Typo.caption">Any</MudText>
-                                                            <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" />
-                                                            <MudText Typo="Typo.caption">Any</MudText>
-                                                        </MudStack>
-                                                    </MudChip>
-                                                }
-                                                else
-                                                {
-                                                    <MudChip T="string" Color="Color.Warning" Variant="Variant.Outlined" Size="Size.Small">
-                                                        @violation
-                                                    </MudChip>
-                                                }
-                                            }
-                                        </MudStack>
-                                    }
                                 </MudTd>
                             </RowTemplate>
                             <NoRecordsContent>
@@ -389,6 +420,8 @@
     private bool IsLoading;
     private AclEntry? SelectedEntry;
     private InputFile? FolderInput;
+    private ElementReference DetailScrollRef;
+    private bool _pendingSplineLayout;
 
 
 
@@ -1223,6 +1256,9 @@
         var sourcePrefixes = ComputeTreePrefixes(sourceNodes);
         var destinationPrefixes = ComputeTreePrefixes(destinationNodes);
         var portPrefixes = ComputeTreePrefixes(portNodes);
+        var activeCrossZonePairs = GetActiveCrossZonePairs(SelectedEntry);
+        var sourceCrossZonePairs = BuildCrossZonePairTags(sourceNodes, activeCrossZonePairs);
+        var destinationCrossZonePairs = BuildCrossZonePairTags(destinationNodes, activeCrossZonePairs);
 
         var maxRows = new[] { protocolNodes.Count, sourceNodes.Count, destinationNodes.Count, portNodes.Count }.Max();
         for (var i = 0; i < maxRows; i++)
@@ -1243,8 +1279,12 @@
                 GetPrefixAt(destinationPrefixes, i),
                 portNode.Text,
                 GetPrefixAt(portPrefixes, i),
-                violations));
+                violations,
+                GetTagAt(sourceCrossZonePairs, i),
+                GetTagAt(destinationCrossZonePairs, i)));
         }
+
+        _pendingSplineLayout = true;
     }
 
     private List<DetailNode> DescribeProtocolNodes(AclEntry entry)
@@ -1584,6 +1624,185 @@
             .ToList();
     }
 
+    private HashSet<int> GetActiveCrossZonePairs(AclEntry entry)
+    {
+        var sources = ExpandAddressInfos(entry.Source).ToList();
+        var destinations = ExpandAddressInfos(entry.Destination).ToList();
+        var activePairs = new HashSet<int>();
+
+        for (var i = 0; i < ViolationConfig.CrossZonePairs.Count; i++)
+        {
+            var pair = ViolationConfig.CrossZonePairs[i];
+            var crossesForward = sources.Any(source => IsInSubnet(source, pair.SubnetA, pair.PrefixLength)) &&
+                                 destinations.Any(destination => IsInSubnet(destination, pair.SubnetB, pair.PrefixLength));
+            var crossesReverse = sources.Any(source => IsInSubnet(source, pair.SubnetB, pair.PrefixLength)) &&
+                                 destinations.Any(destination => IsInSubnet(destination, pair.SubnetA, pair.PrefixLength));
+
+            if (crossesForward || crossesReverse)
+            {
+                activePairs.Add(i);
+            }
+        }
+
+        return activePairs;
+    }
+
+    private static string GetTagAt(List<string> tags, int index)
+    {
+        if (index < tags.Count)
+        {
+            return tags[index];
+        }
+
+        return string.Empty;
+    }
+
+    private List<string> BuildCrossZonePairTags(List<DetailNode> nodes, HashSet<int> activePairs)
+    {
+        var tags = new List<string>(nodes.Count);
+        for (var i = 0; i < nodes.Count; i++)
+        {
+            tags.Add(BuildCrossZonePairTag(nodes[i].Text, activePairs));
+        }
+
+        return tags;
+    }
+
+    private string BuildCrossZonePairTag(string nodeText, HashSet<int> activePairs)
+    {
+        if (activePairs.Count == 0 || string.IsNullOrWhiteSpace(nodeText))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = nodeText.Trim();
+        if (trimmed.StartsWith("Object group:", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("Object:", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("Interface:", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Equals("Not set", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Equals("Any", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Empty;
+        }
+
+        var infos = ExpandAddressInfosForNode(nodeText).ToList();
+        if (infos.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var tokens = new List<string>();
+        for (var i = 0; i < ViolationConfig.CrossZonePairs.Count; i++)
+        {
+            if (!activePairs.Contains(i))
+            {
+                continue;
+            }
+
+            var pair = ViolationConfig.CrossZonePairs[i];
+            var inA = infos.Any(info => IsInSubnet(info, pair.SubnetA, pair.PrefixLength));
+            var inB = infos.Any(info => IsInSubnet(info, pair.SubnetB, pair.PrefixLength));
+
+            if (inA)
+            {
+                tokens.Add($"{i}A");
+            }
+
+            if (inB)
+            {
+                tokens.Add($"{i}B");
+            }
+        }
+
+        return tokens.Count == 0 ? string.Empty : string.Join(',', tokens);
+    }
+
+    private string BuildCrossZoneTooltip(string pairTags)
+    {
+        if (string.IsNullOrWhiteSpace(pairTags))
+        {
+            return string.Empty;
+        }
+
+        var labels = new List<string>();
+        var tokens = pairTags.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var token in tokens)
+        {
+            var trimmed = token.Trim();
+            if (trimmed.Length < 2)
+            {
+                continue;
+            }
+
+            var side = char.ToUpperInvariant(trimmed[^1]);
+            if (!int.TryParse(trimmed.Substring(0, trimmed.Length - 1), out var index))
+            {
+                continue;
+            }
+
+            if (index < 0 || index >= ViolationConfig.CrossZonePairs.Count ||
+                (side != 'A' && side != 'B'))
+            {
+                continue;
+            }
+
+            var pair = ViolationConfig.CrossZonePairs[index];
+            var label = $"{pair.SubnetA}/{pair.PrefixLength} <-> {pair.SubnetB}/{pair.PrefixLength}";
+            if (!labels.Contains(label))
+            {
+                labels.Add(label);
+            }
+        }
+
+        return labels.Count == 0 ? string.Empty : string.Join(Environment.NewLine, labels);
+    }
+
+    private IEnumerable<AddressInfo> ExpandAddressInfosForNode(string nodeText)
+    {
+        if (string.IsNullOrWhiteSpace(nodeText))
+        {
+            return Array.Empty<AddressInfo>();
+        }
+
+        var trimmed = nodeText.Trim();
+        if (trimmed.Equals("Any", StringComparison.OrdinalIgnoreCase))
+        {
+            return new[] { AddressInfo.Any() };
+        }
+
+        if (trimmed.StartsWith("Object group:", StringComparison.OrdinalIgnoreCase))
+        {
+            var groupName = trimmed.Substring("Object group:".Length).Trim();
+            return ExpandGroupMembers(groupName, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        }
+
+        if (trimmed.StartsWith("Object:", StringComparison.OrdinalIgnoreCase))
+        {
+            var objectName = trimmed.Substring("Object:".Length).Trim();
+            return ExpandNetworkObjectEntries(objectName);
+        }
+
+        if (trimmed.StartsWith("Host:", StringComparison.OrdinalIgnoreCase))
+        {
+            var hostValue = trimmed.Substring("Host:".Length).Trim();
+            return new[] { ParseAddressInfo($"host {hostValue}") };
+        }
+
+        if (trimmed.StartsWith("Network:", StringComparison.OrdinalIgnoreCase))
+        {
+            var networkValue = trimmed.Substring("Network:".Length).Trim();
+            return new[] { ParseAddressInfo(networkValue) };
+        }
+
+        if (trimmed.StartsWith("Interface:", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Equals("Not set", StringComparison.OrdinalIgnoreCase))
+        {
+            return Array.Empty<AddressInfo>();
+        }
+
+        return new[] { ParseAddressInfo(trimmed) };
+    }
+
     private bool IsInsecureServiceViolation(AclEntry entry)
     {
         if (!IsPermit(entry))
@@ -1676,6 +1895,14 @@
 
     private static bool HasInsecureServiceInText(params string[] values)
     {
+        return GetInsecureServiceMatches(values).Count > 0;
+    }
+
+    private static IReadOnlyList<InsecureMatch> GetInsecureServiceMatches(params string[] values)
+    {
+        var matches = new List<InsecureMatch>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var value in values)
         {
             if (string.IsNullOrWhiteSpace(value))
@@ -1694,7 +1921,7 @@
                 var token = tokens[i];
                 if (IsInsecureServiceName(token, out _))
                 {
-                    return true;
+                    AddMatch(matches, seen, InsecureMatchKind.ServiceName, token);
                 }
 
                 if (token.Equals("eq", StringComparison.OrdinalIgnoreCase) ||
@@ -1702,11 +1929,17 @@
                     token.Equals("gt", StringComparison.OrdinalIgnoreCase) ||
                     token.Equals("lt", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (i + 1 < tokens.Length &&
-                        TryParsePortToken(tokens[i + 1], out var port) &&
-                        IsInsecurePort(port))
+                    if (i + 1 < tokens.Length)
                     {
-                        return true;
+                        var nextToken = tokens[i + 1];
+                        if (IsInsecureServiceName(nextToken, out _))
+                        {
+                            AddMatch(matches, seen, InsecureMatchKind.ServiceName, nextToken);
+                        }
+                        else if (int.TryParse(nextToken, out var port) && IsInsecurePort(port))
+                        {
+                            AddMatch(matches, seen, InsecureMatchKind.Port, port.ToString(CultureInfo.InvariantCulture));
+                        }
                     }
                     continue;
                 }
@@ -1724,14 +1957,30 @@
 
                         if (ViolationConfig.InsecurePorts.Any(port => port >= startPort && port <= endPort))
                         {
-                            return true;
+                            AddMatch(matches, seen, InsecureMatchKind.Port, $"range {startPort}-{endPort}");
                         }
                     }
                 }
             }
         }
 
-        return false;
+        return matches;
+    }
+
+    private static void AddMatch(List<InsecureMatch> matches, HashSet<string> seen, InsecureMatchKind kind, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        var key = $"{kind}:{value}";
+        if (!seen.Add(key))
+        {
+            return;
+        }
+
+        matches.Add(new InsecureMatch(kind, value));
     }
 
     private static bool IsInsecureServiceName(string token, out int port)
@@ -1752,6 +2001,54 @@
     private static bool IsInsecurePort(int port)
     {
         return ViolationConfig.InsecurePorts.Contains(port);
+    }
+
+    private static string BuildInsecureServiceTooltip(IReadOnlyList<InsecureMatch> matches)
+    {
+        if (matches.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var lines = new List<string>();
+        foreach (var match in matches)
+        {
+            if (match.Kind == InsecureMatchKind.ServiceName)
+            {
+                if (ViolationConfig.InsecureServicePorts.TryGetValue(match.Value, out var port))
+                {
+                    lines.Add($"Service: {match.Value} ({port})");
+                }
+                else
+                {
+                    lines.Add($"Service: {match.Value}");
+                }
+                continue;
+            }
+
+            if (int.TryParse(match.Value, out var portValue))
+            {
+                var names = ViolationConfig.InsecureServicePorts
+                    .Where(entry => entry.Value == portValue)
+                    .Select(entry => entry.Key)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (names.Count > 0)
+                {
+                    lines.Add($"Port: {portValue} ({string.Join("/", names)})");
+                }
+                else
+                {
+                    lines.Add($"Port: {portValue}");
+                }
+                continue;
+            }
+
+            lines.Add($"Port: {match.Value}");
+        }
+
+        return $"Insecure:{Environment.NewLine}{string.Join(Environment.NewLine, lines.Distinct())}";
     }
 
     private static bool IsAnyText(string value)
@@ -2205,7 +2502,9 @@
         string DestinationPrefix,
         string DestinationPortInfo,
         string DestinationPortPrefix,
-        IReadOnlyList<string> Violations);
+        IReadOnlyList<string> Violations,
+        string SourceCrossZonePairs,
+        string DestinationCrossZonePairs);
 
     private sealed record DetailRowContext(
         string ProtocolInfo,
@@ -2219,6 +2518,14 @@
         string Name,
         Func<AclEntry, bool> AppliesToRule,
         Func<AclEntry, DetailRowContext, bool>? AppliesToRow);
+
+    private enum InsecureMatchKind
+    {
+        ServiceName,
+        Port
+    }
+
+    private sealed record InsecureMatch(InsecureMatchKind Kind, string Value);
 
     private sealed class CrossZoneRule
     {
@@ -2453,6 +2760,7 @@
     .acl-detail-scroll {
         flex: 1 1 auto;
         min-height: 0;
+        position: relative;
     }
 
     .acl-panel {
@@ -2489,12 +2797,18 @@
         line-height: 0.9;
     }
 
+    .acl-detail-table {
+        background-color: transparent;
+    }
+
     .acl-detail-table .mud-table-cell {
         padding: 0 6px;
+        background-color: transparent;
     }
 
     .acl-detail-table .mud-table-row {
         line-height: 0.9;
+        background-color: transparent;
     }
 
     .acl-detail-table .mud-chip {
@@ -2503,6 +2817,70 @@
 
     .acl-detail-table .mud-chip-content {
         padding: 0 6px;
+    }
+
+    .acl-detail-warning {
+        display: inline-flex;
+        align-items: center;
+        margin-left: 6px;
+        vertical-align: middle;
+        cursor: pointer;
+    }
+
+    .acl-cross-zone-svg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 1;
+    }
+
+    .acl-detail-scroll .mud-table {
+        position: relative;
+        z-index: 2;
+    }
+
+    .acl-cross-zone-source-marker,
+    .acl-cross-zone-dest-marker {
+        display: inline-block;
+        width: 0;
+        height: 0;
+        vertical-align: middle;
+    }
+
+    .acl-cross-zone-source-marker[data-cross-zone-pairs],
+    .acl-cross-zone-dest-marker[data-cross-zone-pairs] {
+        width: 14px;
+        height: 14px;
+        border-radius: 999px;
+        background: var(--mud-palette-warning);
+        opacity: 0.7;
+        cursor: pointer;
+    }
+
+    .acl-cross-zone-source-marker[data-cross-zone-pairs] {
+        margin-left: 4px;
+    }
+
+    .acl-cross-zone-dest-marker[data-cross-zone-pairs] {
+        margin-right: -14px;
+        position: relative;
+        background: transparent;
+        opacity: 1;
+        cursor: pointer;
+        z-index: 3;
+    }
+
+    .acl-cross-zone-dest-marker-root[data-cross-zone-pairs] {
+        margin-right: -14px;
+        width: 14px;
+        height: 14px;
+    }
+
+    .acl-cross-zone-source-marker[data-cross-zone-pairs]:hover,
+    .acl-cross-zone-dest-marker[data-cross-zone-pairs]:hover {
+        opacity: 0.95;
     }
 
     .acl-tree-prefix {
