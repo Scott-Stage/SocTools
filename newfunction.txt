@@ -96,7 +96,12 @@
             <MudStack Spacing="3" Class="acl-right-stack">
                 <MudPaper Elevation="2" Class="p-4 acl-panel acl-panel-scroll">
                     <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="acl-rules-header">
-                        <MudText Typo="Typo.subtitle1" Class="font-weight-bold">Rules</MudText>
+                        <MudStack Row="true" AlignItems="AlignItems.Baseline" Wrap="Wrap.Wrap" Spacing="1">
+                            @if (!string.IsNullOrWhiteSpace(UploadedFileName))
+                            {
+                                <MudText Typo="Typo.h4" Class="font-weight-bold acl-rules-title">@UploadedFileName</MudText>
+                            }
+                        </MudStack>
                         @if (Entries.Count > 0)
                         {
                             <MudPaper Elevation="0" Class="acl-violation-summary">
@@ -450,6 +455,12 @@
     .acl-rules-chips {
         margin-left: auto;
     }
+
+    .acl-rules-title {
+        color: var(--mud-palette-primary);
+        letter-spacing: 0.3px;
+        line-height: 1.1;
+    }
 </style>
 
 @code {
@@ -494,8 +505,10 @@
         IsLoading = true;
         ParseWarnings.Clear();
         Entries.Clear();
+        DetailRows.Clear();
         LogFiles.Clear();
         LogFileTree.Clear();
+        SelectedEntry = null;
 
         try
         {
@@ -538,10 +551,6 @@
 
             UploadedFileName = $"{LogFiles.Count} log file(s) found";
             BuildLogFileTree();
-            if (firstLogFile is not null)
-            {
-                await LoadLogFile(firstLogFile.File);
-            }
         }
         catch (Exception ex)
         {
@@ -636,7 +645,7 @@
                         Text = segment,
                         Icon = Icons.Material.Filled.Folder,
                         Value = new LogTreeNode(segment, true, null),
-                        Expanded = true,
+                        Expanded = false,
                         Expandable = true,
                         Children = new List<TreeItemData<LogTreeNode>>()
                     };
@@ -2366,7 +2375,7 @@
             Name = name;
             IsFolder = isFolder;
             FileEntry = fileEntry;
-            IsExpanded = true;
+            IsExpanded = false;
         }
 
         public string Name { get; }
